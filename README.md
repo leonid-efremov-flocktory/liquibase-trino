@@ -59,7 +59,7 @@ Add to the consumer's `pom.xml`:
 <dependency>
     <groupId>io.github.leonid-efremov-flocktory</groupId>
     <artifactId>liquibase-trino</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 
@@ -69,7 +69,7 @@ Or with a single Maven invocation:
 mvn dependency:copy-dependencies \
     -DincludeScope=runtime \
     -DexcludeArtifactIds=h2 \
-    -Dartifact=io.github.leonid-efremov-flocktory:liquibase-trino:0.1.0
+    -Dartifact=io.github.leonid-efremov-flocktory:liquibase-trino:0.1.1
 ```
 
 Liquibase loads every jar from `internal/lib` and `internal/extensions`, so no separate
@@ -95,7 +95,7 @@ Releases are driven by tags. Pushing `v*` runs
 4. deploys to GitHub Packages — only if the tests pass.
 
 ```bash
-git tag v0.1.0 && git push origin main && git push origin v0.1.0
+git tag v0.1.1 && git push origin main && git push origin v0.1.1
 ```
 
 The deploy step uses the workflow's built-in `GITHUB_TOKEN`. No additional secrets are
