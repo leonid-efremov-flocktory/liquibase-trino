@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.github.leonid-efremov-flocktory</groupId>
+    <artifactId>liquibase-trino</artifactId>
+    <version>0.1.0</version>
+    <packaging>jar</packaging>
+
+    <name>Liquibase Extension: Trino support (H2-based shim)</name>
+    <description>Trino support for Liquibase 5.x via H2Database dialect shim</description>
+    <url>https://github.com/leonid-efremov-flocktory/liquibase-trino</url>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Leonid Efremov</name>
+            <url>https://github.com/leonid-efremov-flocktory</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git@github.com:leonid-efremov-flocktory/liquibase-trino.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/leonid-efremov-flocktory/liquibase-trino.git</developerConnection>
+        <url>https://github.com/leonid-efremov-flocktory/liquibase-trino</url>
+    </scm>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <maven.compiler.release>17</maven.compiler.release>
+
+        <liquibase.version>5.0.3</liquibase.version>
+        <trino.version>464</trino.version>
+        <!-- Драйвер H2: нужен TrinoDatabase, который наследует H2Database из liquibase-core.
+             В дистрибутиве liquibase 5.0.3 уже лежит h2.jar этой же версии, поэтому при
+             сборке образа его нужно исключить (см. docker/liquibase/Dockerfile в dwh_migrations). -->
+        <h2.version>2.4.240</h2.version>
+        <junit.version>5.10.2</junit.version>
+
+        <!-- Версии плагинов сборки. Maven не берёт их из super-POM надёжно,
+             и без явного указания сборка падает WARNING'ом о неполном effective model. -->
+        <maven-resources-plugin.version>3.3.1</maven-resources-plugin.version>
+        <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+    </properties>
+
+    <!-- Единственный источник правды по зависимостям плагина.
+         Потребители (в т.ч. docker/liquibase) указывают только координаты плагина,
+         остальное Maven доставляет транзитивно. -->
+    <dependencies>
+        <!-- JDBC-драйвер Trino: возвращает product name "Trino", по которому Liquibase
+             выбирает реализацию Database. -->
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-jdbc</artifactId>
+            <version>${trino.version}</version>
+        </dependency>
+
+        <!-- Драйвер H2 для класса H2Database, который расширяет TrinoDatabase. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>${h2.version}</version>
+        </dependency>
+
+        <!-- Родительский класс TrinoDatabase (H2Database) приходит из самого Liquibase,
+             поэтому в рантайм-дистрибутив не упаковывается. -->
+        <dependency>
+            <groupId>org.liquibase</groupId>
+            <artifactId>liquibase-core</artifactId>
+            <version>${liquibase.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>${maven-resources-plugin.version}</version>
+                <configuration>
+                    <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven-compiler-plugin.version}</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                    <encoding>${project.build.sourceEncoding}</encoding>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
+
+            <!-- Исходники и javadoc обязательны для публикации в Maven-репозиторий. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.6.3</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Публикация в GitHub Packages: https://maven.pkg.github.com/leonid-efremov-flocktory/liquibase-trino -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <version>3.1.2</version>
+                <configuration>
+                    <repositoryId>github</repositoryId>
+                    <url>https://maven.pkg.github.com/leonid-efremov-flocktory/liquibase-trino</url>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

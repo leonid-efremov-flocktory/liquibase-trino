@@ -1,0 +1,76 @@
+services:
+  # S3-compatible storage for Iceberg table data (a community-maintained MinIO fork).
+  # Needed because Trino 464 cannot write to a local filesystem: there is no file:// scheme,
+  # only s3/azure/gcs/hdfs.
+  silo:
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    container_name: liquibase-trino-silo
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: liquibase
+      MINIO_ROOT_PASSWORD: liquibase-trino-test
+    ports:
+      - "9000:9000"
+    volumes:
+      - warehouse:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # Warehouse bucket. A separate service because the silo image bundles the mcli client,
+  # and the bucket has to exist before Trino starts anyway.
+  silo-init:
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    container_name: liquibase-trino-silo-init
+    depends_on:
+      silo:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: liquibase
+      MINIO_ROOT_PASSWORD: liquibase-trino-test
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - mcli alias set local http://silo:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && mcli mb --ignore-existing local/warehouse
+
+  # Iceberg REST catalog: a thin wrapper over JdbcCatalog on SQLite inside the container.
+  # Needed because Trino's memory connector rejects DELETE/UPDATE, which Liquibase's
+  # tracking tables (DATABASECHANGELOGLOCK) require — without them neither update nor
+  # rollback can run.
+  #
+  # The version is pinned by tag and digest: 'latest' moves to a new Iceberg build and
+  # breaks compatibility with Trino 464 for no visible reason.
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.10.1
+    container_name: liquibase-trino-iceberg-rest
+    depends_on:
+      silo-init:
+        condition: service_completed_successfully
+    environment:
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://silo:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      # The fixture supports both path-style and virtual-host addressing; explicit credentials
+      # are needed so the fixture and Trino write into the same bucket.
+      AWS_ACCESS_KEY_ID: liquibase
+      AWS_SECRET_ACCESS_KEY: liquibase-trino-test
+      AWS_REGION: us-east-1
+      LOG_LEVEL: WARN
+    ports:
+      - "8181:8181"
+
+  trino:
+    image: trinodb/trino:464
+    container_name: liquibase-trino-test
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./etc:/etc/trino
+    depends_on:
+      iceberg-rest:
+        condition: service_healthy
+
+volumes:
+  warehouse:

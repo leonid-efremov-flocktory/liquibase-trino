@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Fixture for TrinoChangeLogUpdateTest, TrinoChangelogRollbackUnitTest and
+    TrinoRollbackIntegrationTest. Fully self-contained: both changesets are formatted SQL
+    files that create their own objects in test_schema (test_table with data and test_view
+    over it), so the tests depend on neither dwh_migrations nor external storage tables.
+
+    The object identifier is the real catalog of the test Trino from
+    src/test/trino/etc/catalog/iceberg_catalog.properties, so the migrations can also be
+    applied and rolled back on a running container (see TrinoChangeLogUpdateTest).
+-->
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!-- These properties mirror the production changelog: their expansion is asserted on. -->
+    <property name="env.prefix" value="dev_" context="dev"/>
+    <property name="env.prefix" value="" context="prod"/>
+    <property name="catalog.default" value="iceberg_catalog" dbms="trino"/>
+    <property name="schema.test_schema" value="${env.prefix}test_schema" dbms="trino"/>
+
+    <!-- Empty <rollback/>: schemas are not dropped on rollback, so the changeset is a no-op. -->
+    <changeSet id="common-schema-setup" author="Leonid-Efremov">
+        <comment>Create the environment DV schemas if they do not exist</comment>
+        <sql>
+            CREATE SCHEMA IF NOT EXISTS ${catalog.default}.${schema.test_schema};
+        </sql>
+        <rollback/>
+    </changeSet>
+
+    <!-- Formatted SQL with a rollback block (see the included files). -->
+    <include file="v1-test-table-view.sql" relativeToChangelogFile="true"/>
+    <include file="v2-test-table-view-extend.sql" relativeToChangelogFile="true"/>
+
+</databaseChangeLog>
