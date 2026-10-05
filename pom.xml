@@ -88,6 +88,17 @@
         </dependency>
     </dependencies>
 
+    <!-- Публикация в GitHub Packages: https://maven.pkg.github.com/leonid-efremov-flocktory/liquibase-trino
+         Логин и токен приходят из ~/.m2/settings.xml (server с id=github), который в CI
+         создаёт шаг publish. -->
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/leonid-efremov-flocktory/liquibase-trino</url>
+        </repository>
+    </distributionManagement>
+
     <build>
         <plugins>
             <plugin>
@@ -142,17 +153,6 @@
                         </goals>
                     </execution>
                 </executions>
-            </plugin>
-
-            <!-- Публикация в GitHub Packages: https://maven.pkg.github.com/leonid-efremov-flocktory/liquibase-trino -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-deploy-plugin</artifactId>
-                <version>3.1.2</version>
-                <configuration>
-                    <repositoryId>github</repositoryId>
-                    <url>https://maven.pkg.github.com/leonid-efremov-flocktory/liquibase-trino</url>
-                </configuration>
             </plugin>
         </plugins>
     </build>
