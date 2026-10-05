@@ -38,10 +38,10 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.release>17</maven.compiler.release>
 
-        <liquibase.version>5.0.3</liquibase.version>
+        <liquibase.version>5.0.4</liquibase.version>
         <trino.version>464</trino.version>
         <!-- Драйвер H2: нужен TrinoDatabase, который наследует H2Database из liquibase-core.
-             В дистрибутиве liquibase 5.0.3 уже лежит h2.jar этой же версии, поэтому при
+             В дистрибутиве liquibase 5.0.4 уже лежит h2.jar этой же версии, поэтому при
              сборке образа его нужно исключить (см. docker/liquibase/Dockerfile в dwh_migrations). -->
         <h2.version>2.4.240</h2.version>
         <junit.version>5.10.2</junit.version>

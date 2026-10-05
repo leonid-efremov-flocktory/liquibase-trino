@@ -177,7 +177,7 @@ public final class TrinoTestSupport {
      * print "no changesets to execute" and apply nothing while its summary still counts
      * "Run: 2". That is a Liquibase bug, worked around here; see Known limitations in README.
      *
-     * @see <a href="https://github.com/liquibase/liquibase/blob/v5.0.3/liquibase-standard/src/main/java/liquibase/changelog/FastCheckService.java">FastCheckService</a>
+     * @see <a href="https://github.com/liquibase/liquibase/blob/v5.0.4/liquibase-standard/src/main/java/liquibase/changelog/FastCheckService.java">FastCheckService</a>
      */
     private static void clearFastCheckCache() {
         // Scope.getSingleton walks up to the root scope, so this is the very same instance

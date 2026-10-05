@@ -43,10 +43,10 @@ All dependencies live in `pom.xml` — the single source of truth:
 |---|---|---|
 | `io.trino:trino-jdbc:464` | compile | Trino JDBC driver; reports product name `Trino` |
 | `com.h2database:h2:2.4.240` | compile | H2 driver for `H2Database`, which `TrinoDatabase` extends |
-| `org.liquibase:liquibase-core:5.0.3` | provided | Supplied by Liquibase itself, not bundled |
+| `org.liquibase:liquibase-core:5.0.4` | provided | Supplied by Liquibase itself, not bundled |
 | `org.junit.jupiter:junit-jupiter:5.10.2` | test | Tests |
 
-> **Note on h2.** The Liquibase 5.0.3 distribution already ships `internal/lib/h2.jar` at
+> **Note on h2.** The Liquibase 5.0.4 distribution already ships `internal/lib/h2.jar` at
 > the same version (2.4.240). When building an image, h2 must be excluded from the
 > copied dependencies — otherwise two H2 drivers end up on the classpath and Liquibase
 > prints `*** Duplicate JAR files ***` on every start.
