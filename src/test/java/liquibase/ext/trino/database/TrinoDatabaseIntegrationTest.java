@@ -1,13 +1,16 @@
-package liquibase.ext.trino;
+package liquibase.ext.trino.database;
 
 import liquibase.database.Database;
-import liquibase.ext.trino.database.TrinoDatabase;
+import liquibase.database.OfflineConnection;
+import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.structure.core.Table;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -15,7 +18,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * <p>
  * That is the only thing here needing a live Trino: the remaining dialect properties
  * (identifier case, port, driver, priority) need no stand and live in
- * {@link TrinoDatabaseUnitTest} and {@link TrinoMetadataSnapshotTest}.
+ * {@link TrinoDatabaseUnitTest} and {@code TrinoMetadataSnapshotIntegrationTest}
+ * (in the {@code snapshot} package).
  */
 class TrinoDatabaseIntegrationTest {
 
@@ -30,6 +34,15 @@ class TrinoDatabaseIntegrationTest {
     @Test
     void trinoDatabaseIsSelectedByProductName() {
         assertInstanceOf(TrinoDatabase.class, db);
+    }
+
+    @Test
+    void liveConnectionIsClaimedByTheDialect() throws Exception {
+        // The decision isCorrectDatabaseImplementation makes, asserted on the connection Liquibase
+        // actually opened: it must accept this Trino connection and reject anything else.
+        TrinoDatabase dialect = (TrinoDatabase) db;
+        assertTrue(dialect.isCorrectDatabaseImplementation(db.getConnection()));
+        assertFalse(dialect.isCorrectDatabaseImplementation(new OfflineConnection()));
     }
 
     @Test

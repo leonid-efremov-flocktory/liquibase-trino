@@ -3,11 +3,6 @@ package liquibase.ext.trino.sqlgenerator;
 import liquibase.change.ColumnConfig;
 import liquibase.database.Database;
 import liquibase.database.ObjectQuotingStrategy;
-import liquibase.database.core.AbstractDb2Database;
-import liquibase.database.core.MSSQLDatabase;
-import liquibase.database.core.MySQLDatabase;
-import liquibase.database.core.OracleDatabase;
-import liquibase.database.core.PostgresDatabase;
 import liquibase.ext.trino.database.TrinoDatabase;
 import liquibase.sql.Sql;
 import liquibase.sql.UnparsedSql;
@@ -43,7 +38,7 @@ public class TrinoSelectFromDatabaseChangeLogGenerator extends SelectFromDatabas
         ObjectQuotingStrategy currentStrategy = database.getObjectQuotingStrategy();
         database.setObjectQuotingStrategy(ObjectQuotingStrategy.LEGACY);
         try {
-            String sql = "SELECT " + (database instanceof MSSQLDatabase && statement.getLimit() != null ? "TOP " + statement.getLimit() + " " : "") + StringUtil.join(columnsToSelect, ",", (StringUtil.StringUtilFormatter<ColumnConfig>) column -> {
+            String sql = "SELECT " + StringUtil.join(columnsToSelect, ",", (StringUtil.StringUtilFormatter<ColumnConfig>) column -> {
                 if ((column.getComputed() != null) && column.getComputed()) {
                     return column.getName();
                 } else {
@@ -74,19 +69,9 @@ public class TrinoSelectFromDatabaseChangeLogGenerator extends SelectFromDatabas
                     }
                 }
             }
-
+            
             if (statement.getLimit() != null) {
-                if (database instanceof OracleDatabase) {
-                    if (whereClause == null) {
-                        sql += " WHERE ROWNUM=" + statement.getLimit();
-                    } else {
-                        sql += " AND ROWNUM=" + statement.getLimit();
-                    }
-                } else if ((database instanceof MySQLDatabase) || (database instanceof PostgresDatabase)) {
-                    sql += " LIMIT " + statement.getLimit();
-                } else if (database instanceof AbstractDb2Database) {
-                    sql += " FETCH FIRST " + statement.getLimit() + " ROWS ONLY";
-                }
+                sql += " LIMIT " + statement.getLimit();
             }
 
             return new Sql[]{

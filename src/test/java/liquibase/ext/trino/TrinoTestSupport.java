@@ -3,6 +3,8 @@ package liquibase.ext.trino;
 import liquibase.Contexts;
 import liquibase.Liquibase;
 import liquibase.Scope;
+import liquibase.changelog.ChangeLogHistoryService;
+import liquibase.changelog.ChangeLogHistoryServiceFactory;
 import liquibase.changelog.FastCheckService;
 import liquibase.database.Database;
 import liquibase.database.DatabaseFactory;
@@ -30,6 +32,14 @@ public final class TrinoTestSupport {
     /** Shared {@code test-changelog.xml} fixture for all plugin tests. */
     public static final String CHANGELOG = "liquibase/ext/trino/test-changelog.xml";
 
+    /**
+     * Second fixture: the same objects expressed through {@code <sqlFile>} instead of
+     * formatted-SQL includes, in XML, YAML and JSON. See TrinoChangelogFormatIntegrationTest.
+     */
+    public static final String CHANGELOG_SQLFILE_XML = "liquibase/ext/trino/sqlfile-probe.xml";
+    public static final String CHANGELOG_SQLFILE_YAML = "liquibase/ext/trino/sqlfile-probe.yaml";
+    public static final String CHANGELOG_SQLFILE_JSON = "liquibase/ext/trino/sqlfile-probe.json";
+
     /** Context under which the fixture expands its properties ({@code dev_test_schema}). */
     public static final Contexts CONTEXT = new Contexts("dev");
 
@@ -40,6 +50,10 @@ public final class TrinoTestSupport {
     public static final String FIXTURE_SCHEMA = "iceberg_catalog." + FIXTURE_SCHEMA_NAME;
     public static final String FIXTURE_TABLE = FIXTURE_SCHEMA + ".test_table";
     public static final String FIXTURE_VIEW = FIXTURE_SCHEMA + ".test_view";
+
+    /** Objects the sqlFile fixtures create, next to the ones above. */
+    public static final String SQLFILE_TABLE = FIXTURE_SCHEMA + ".sqlfile_table";
+    public static final String SQLFILE_VIEW = FIXTURE_SCHEMA + ".sqlfile_view";
 
     public static final String TABLE_NAME = "test_table";
     public static final String VIEW_NAME = "test_view";
@@ -183,6 +197,33 @@ public final class TrinoTestSupport {
         new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), db).rollback(count, CONTEXT, NO_LABELS);
     }
 
+    /** A {@code Liquibase} handle over the shared fixture and the given Database. */
+    public static Liquibase liquibase(Database db) {
+        return new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), db);
+    }
+
+    /** A {@code Liquibase} handle over an arbitrary changelog on the classpath. */
+    public static Liquibase liquibase(String changelog, Database db) {
+        return new Liquibase(changelog, new ClassLoaderResourceAccessor(), db);
+    }
+
+    /** Applies an arbitrary changelog under {@link #CONTEXT}. */
+    public static void update(String changelog, Database db) throws LiquibaseException {
+        clearFastCheckCache();
+        liquibase(changelog, db).update(CONTEXT, NO_LABELS);
+    }
+
+    /** Rolls back the last {@code count} changesets of an arbitrary changelog. */
+    public static void rollback(String changelog, Database db, int count) throws LiquibaseException {
+        clearFastCheckCache();
+        liquibase(changelog, db).rollback(count, CONTEXT, NO_LABELS);
+    }
+
+    /** The tracking-table service Liquibase itself uses, to read applied changesets back. */
+    public static ChangeLogHistoryService historyService(Database db) {
+        return ChangeLogHistoryServiceFactory.getInstance().getChangeLogService(db);
+    }
+
     /**
      * Resets the stand before a test: drops the fixture objects and the tracking tables so
      * the next {@link #update} runs the changesets from scratch.
@@ -291,6 +332,7 @@ public final class TrinoTestSupport {
             throw new AssertionError("Expected " + FIXTURE_CHANGESETS
                     + " changesets in DATABASECHANGELOG after update, but found " + applied
                     + ". The fixture is not applied — see Known limitations in README"
-                    + " (Liquibase fast-check after rollback).");        }
+                    + " (Liquibase fast-check after rollback).");
+        }
     }
 }

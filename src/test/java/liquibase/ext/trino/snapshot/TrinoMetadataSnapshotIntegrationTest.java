@@ -1,8 +1,9 @@
-package liquibase.ext.trino;
+package liquibase.ext.trino.snapshot;
 
 import liquibase.CatalogAndSchema;
 import liquibase.database.Database;
 import liquibase.database.AbstractJdbcDatabase;
+import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.snapshot.SnapshotGeneratorFactory;
 import liquibase.structure.core.Schema;
 import liquibase.structure.core.Table;
@@ -27,7 +28,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * filter ({@code system.jdbc.tables}) is case-sensitive. {@code SnapshotGeneratorFactory.has(...)}
  * then failed to find an existing table and Liquibase retried the CREATE TABLE.
  */
-class TrinoMetadataSnapshotTest {
+class TrinoMetadataSnapshotIntegrationTest {
 
     private static final String SCHEMA = "liquibase_test";
     private static final String TABLE = "snapshot_probe";

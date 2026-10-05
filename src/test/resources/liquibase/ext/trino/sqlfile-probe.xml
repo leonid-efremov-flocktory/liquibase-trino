@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    The same fixture as test-changelog.xml, expressed differently.
+
+    Milestone 1 of the "add a database" guide asks that xml/yaml/json changelogs built only
+    from <sql> and <sqlFile> behave identically. The XML version here uses <sqlFile> and
+    split/relativeToChangelogFile; the YAML version in sqlfile-probe.yaml covers the other
+    parser and the other file layout. Both are applied by TrinoChangelogFormatIntegrationTest.
+-->
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <property name="env.prefix" value="dev_" context="dev"/>
+    <property name="catalog.default" value="iceberg_catalog" dbms="trino"/>
+    <property name="schema.test_schema" value="${env.prefix}test_schema" dbms="trino"/>
+
+    <changeSet id="xml-sqlfile-setup" author="Leonid-Efremov">
+        <comment>Create the schema the probe objects live in</comment>
+        <sql>
+            CREATE SCHEMA IF NOT EXISTS ${catalog.default}.${schema.test_schema};
+        </sql>
+        <rollback/>
+    </changeSet>
+
+    <!-- The body sits next to this changelog, so the path is relative rather than classpath-wide. -->
+    <changeSet id="xml-sqlfile-table-and-rows" author="Leonid-Efremov">
+        <comment>Objects created from an external file via the sqlFile tag</comment>
+        <sqlFile path="sqlfile-probe-body.sql"
+                 relativeToChangelogFile="true"
+                 endDelimiter=";"
+                 splitStatements="true"/>
+        <rollback>
+            <sql>
+                DROP VIEW IF EXISTS ${catalog.default}.${schema.test_schema}.sqlfile_view;
+                DROP TABLE IF EXISTS ${catalog.default}.${schema.test_schema}.sqlfile_table;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

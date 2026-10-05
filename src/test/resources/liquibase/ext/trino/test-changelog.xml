@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-    Fixture for TrinoChangeLogUpdateTest, TrinoChangelogRollbackUnitTest and
+    Fixture for TrinoChangeLogUpdateIntegrationTest, TrinoChangelogRollbackUnitTest and
     TrinoRollbackIntegrationTest. Fully self-contained: both changesets are formatted SQL
     files that create their own objects in test_schema (test_table with data and test_view
     over it), so the tests depend on neither dwh_migrations nor external storage tables.
 
     The object identifier is the real catalog of the test Trino from
     src/test/trino/etc/catalog/iceberg_catalog.properties, so the migrations can also be
-    applied and rolled back on a running container (see TrinoChangeLogUpdateTest).
+    applied and rolled back on a running container (see TrinoChangeLogUpdateIntegrationTest).
 -->
 <databaseChangeLog
         xmlns="http://www.liquibase.org/xml/ns/dbchangelog"

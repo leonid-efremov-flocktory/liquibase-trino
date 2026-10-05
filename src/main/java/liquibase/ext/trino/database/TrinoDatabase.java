@@ -124,7 +124,8 @@ public class TrinoDatabase extends H2Database {
 
     @Override
     public boolean isCorrectDatabaseImplementation(DatabaseConnection conn) throws DatabaseException {
-        return PRODUCT_NAME.trim().equalsIgnoreCase(conn.getDatabaseProductName().trim());
+        String productName = conn.getDatabaseProductName();
+        return productName != null && PRODUCT_NAME.trim().equalsIgnoreCase(productName.trim());
     }
 
     @Override

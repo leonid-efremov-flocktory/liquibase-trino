@@ -1,6 +1,7 @@
-package liquibase.ext.trino;
+package liquibase.ext.trino.changelog;
 
 import liquibase.database.Database;
+import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.snapshot.SnapshotGeneratorFactory;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -19,7 +20,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * {@link #setup()} and the tests only check the outcome; direct queries are used purely
  * for verification.
  */
-class TrinoChangeLogUpdateTest {
+class TrinoChangeLogUpdateIntegrationTest {
 
     private static Database db;
 

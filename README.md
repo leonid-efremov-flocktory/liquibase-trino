@@ -121,27 +121,23 @@ If Maven is not installed on the host, the script runs it inside a
 `maven:3.9-eclipse-temurin-17` container (Trino is reachable via `host.docker.internal`).
 The Trino URL and user can be overridden with `TRINO_TEST_URL` / `TRINO_TEST_USER`.
 
-The suite does not depend on the migrations repository: all test classes share a single
-fixture, `src/test/resources/liquibase/ext/trino/test-changelog.xml`. It is fully
-self-contained — its two changesets are formatted SQL files that create their own
-`test_table` (with `INT`/`VARCHAR`/`TIMESTAMP` columns and seeded rows) and `test_view`
-in `dev_test_schema` of the `iceberg_catalog` catalog, so nothing is read from external
-storage.
+All test classes share a single fixture, `src/test/resources/liquibase/ext/trino/test-changelog.xml`.
 
-`TrinoChangeLogUpdateTest` applies the fixture from scratch and
-`TrinoRollbackIntegrationTest` reuses that state through `applyIfNeeded()`, so the fixture
-is applied once per run. Any class also passes on its own (`-Dtest=...`), which is what
-CI does for debugging.
+Tests are grouped by the part of the plugin they cover, in packages mirroring the main sources
+(`database`, `sqlgenerator`, `snapshot`) plus `changelog` for the Liquibase commands:
 
-The migrations are left applied after a run, so the result can be inspected:
-
-```bash
-./run-tests.sh up && ./run-tests.sh test && ./run-tests.sh ps
+```
+src/test/java/liquibase/ext/trino/
+├── TrinoTestSupport.java          # shared fixture plumbing: connection, reset, state readers
+├── database/                      # the dialect: properties, and picking it from a connection
+├── sqlgenerator/                  # the SQL the two generators emit
+├── changelog/                     # update, rollback, status/history/tag, changelog formats
+└── snapshot/                      # finding existing tables and schemas
 ```
 
 ### Test stand
 
-Three services, all pinned to an explicit version tag:
+Three services to provide Trino + Iceberg working setup:
 
 | Service | Image | Role |
 | --- | --- | --- |
@@ -149,30 +145,27 @@ Three services, all pinned to an explicit version tag:
 | `iceberg-rest` | `apache/iceberg-rest-fixture` | Iceberg REST catalog over a SQLite-backed `JdbcCatalog` |
 | `trino` | `trinodb/trino:464` | the Trino cluster under test |
 
-Two properties of this stand are load-bearing:
-
-- **Iceberg, not the memory connector.** The memory connector rejects `DELETE`/`UPDATE`,
-  and Liquibase needs both for `DATABASECHANGELOGLOCK`, so neither `update` nor `rollback`
-  could run against it. Iceberg supports row-level modification.
-- **`iceberg.format-version=2`.** Row-level `DELETE`/`UPDATE` exist only in format
-  version 2, so without this the tracking tables themselves would be unwritable.
-  Trino applies the setting to every table it creates, including Liquibase's.
-
-Trino 464 cannot write to a local filesystem (there is no `file://` scheme), which is why
-object storage is part of the stand at all.
-
 Notes on individual tests:
 
 - `TrinoDatabaseUnitTest` — dialect properties that need no connection: short name,
-  priority, default port, driver, identifier case. 12 tests.
+  priority, default port, driver, identifier case, product name, plus the two that the shim
+  exists for: lower-casing of escaped column names, and that `setAutoCommit` is a no-op because
+  the Trino driver rejects it. 16 tests.
+- `TrinoSqlGeneratorsUnitTest` — the SQL both plugin generators emit, as strings: the lock
+  table is created without a primary key and with `TIMESTAMP` rather than H2's `datetime`, and
+  the changelog `SELECT` keeps its column list lower-case (the base generator upper-cases it),
+  applies `WHERE`/`ORDER BY` and a plain `LIMIT`. Also pins that both generators apply to
+  `TrinoDatabase` only. 9 tests.
 - `TrinoDatabaseIntegrationTest` — that `DatabaseFactory` picks `TrinoDatabase` from a
-  real connection, and that the picked dialect lower-cases identifiers.
-- `TrinoMetadataSnapshotTest` — a regression test for locating existing tables
+  real connection, that the picked dialect lower-cases identifiers, and that the dialect claims
+  the live connection while declining one whose product name is absent (an offline connection,
+  which reports `null` and used to make `isCorrectDatabaseImplementation` throw).
+- `TrinoMetadataSnapshotIntegrationTest` — a regression test for locating existing tables
   (`SnapshotGeneratorFactory.has(...)`). The H2 dialect upper-cased the schema while
   Trino stores unquoted identifiers in lower case, which made Liquibase try to recreate
   tables that already existed. The metadata test drives the schema in upper case on
   purpose, so a regression to `UPPER_CASE` fails rather than passes.
-- `TrinoChangeLogUpdateTest` — a full `update` run. Asserts both tracking tables exist,
+- `TrinoChangeLogUpdateIntegrationTest` — a full `update` run. Asserts both tracking tables exist,
   that all three changesets are recorded **in execution order with their `ORDEREXECUTED`,
   `EXECTYPE` and `FILENAME`**, that `DATABASECHANGELOGLOCK` is left with `LOCKED = false`
   and an empty `LOCKEDBY`, and that the fixture produced a five-row `test_table` with
@@ -186,6 +179,28 @@ Notes on individual tests:
   the resulting `DATABASECHANGELOG` contents and that the lock is released, so a
   changelog row that outlives its changeset fails the run. `@AfterAll` leaves the fixture
   applied so the objects stay visible.
+- `TrinoReadCommandsIntegrationTest` — the commands that read the tracking table back rather
+  than write to it: `status` (including `getChangeSetStatuses`, which must read back a stored
+  checksum per changeset, and an empty unrun list), `history` (changesets in execution order
+  with their `orderexecuted` and timestamps), and `tag`/`tagExists`. All of them go through
+  `TrinoSelectFromDatabaseChangeLogGenerator`, so they are the tests that would catch a defect
+  in it — which surfaces as wrong output, not as an exception. The two `tag` tests are ordered
+  because the second asserts a tag written by the first; `tagExists` also goes through the
+  `ByTag` where-clause, so the tag must be readable by a tagged `SELECT`, not merely stored.
+- `TrinoSchemaSnapshotIntegrationTest` — schema lookup through
+  `TrinoSchemaSnapshotGenerator`. Existing schema found, missing one not, lookup
+  case-insensitive, a schema in another catalog keeps its own catalog, and a schema name that
+  exists in several catalogs resolves to the requested one. That last case is what the
+  generator is for: the base generator builds candidate names through
+  `getSchemaFromJdbcInfo`, which stamps the connection's default catalog onto every schema, so
+  it answered `system.runtime` as `iceberg_catalog.runtime` and threw
+  `InvalidExampleException: Found multiple catalog/schemas matching` for a name shared across
+  catalogs.
+- `TrinoChangelogFormatIntegrationTest` — the same objects expressed through `<sqlFile>`
+  instead of formatted-SQL includes, in XML, YAML and JSON. Confirms each format gets its own
+  parser, that `relativeToChangelogFile` finds the body file sitting next to the changelog, that
+  each format records its own changeset ids, and that all three roll back. The row text is
+  asserted on purpose: it is the only evidence the body file was read rather than skipped.
 - `TrinoChangelogRollbackUnitTest` — that an empty XML `<rollback/>` is parsed into an
   `EmptyChange`. Needs no running Trino. The *contents* of the rollback blocks are checked
   by `TrinoRollbackIntegrationTest`, which parses the same fixture and then executes the
@@ -203,15 +218,17 @@ reachable and every test failed inside `@BeforeAll` instead of skipping.
 
 ## Known limitations
 
-- `liquibase dropAll` does not work against Trino: it reads foreign keys through the JDBC
-  metadata API, and Trino has no `information_schema.table_constraints` view. The tests
-  reset the stand with `DROP SCHEMA ... CASCADE` instead.
 - `TrinoSelectFromDatabaseChangeLogGenerator` duplicates logic from liquibase-core's
   `SelectFromDatabaseChangeLogGenerator`, which is licensed FSL-1.1-ALv2. The base class
   exposes no protected seam (only `generateSql` and `validate`), so the override could
   not be reduced to a single method without an upstream change. All LPM community
   extensions currently use FSL-1.1-ALv2 rather than MIT; if this plugin is contributed
   upstream, expect the license to be relicensed to match.
+- **A schema named `information_schema` is never snapshotted.** `TrinoDatabase` inherits
+  `AbstractJdbcDatabase.isSystemObject`, which treats any schema by that name as a system
+  object, and `DatabaseSnapshot.include()` drops those before any generator runs. This is an
+  upstream rule inherited from H2, not a plugin decision. The fix, if the behaviour is ever
+  wanted, is an `isSystemObject` override on `TrinoDatabase` — not a change to the generator.
 - **`update` after `rollback` in the same JVM can silently do nothing.** Liquibase 5 added a
   fast path to `update`: before taking the lock, `AbstractUpdateCommandStep` asks
   `FastCheckService` whether there is anything to run. That service caches its answer per

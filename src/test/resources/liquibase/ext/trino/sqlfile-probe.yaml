@@ -1,0 +1,40 @@
+databaseChangeLog:
+  - property:
+      name: env.prefix
+      value: "dev_"
+      context: dev
+  - property:
+      name: catalog.default
+      value: iceberg_catalog
+      dbms: trino
+  - property:
+      name: schema.test_schema
+      value: ${env.prefix}test_schema
+      dbms: trino
+  - changeSet:
+      id: yaml-sqlfile-setup
+      author: Leonid-Efremov
+      comment: Create the schema the probe objects live in
+      context: dev
+      changes:
+        - sql:
+            sql: CREATE SCHEMA IF NOT EXISTS ${catalog.default}.${schema.test_schema};
+            splitStatements: true
+            endDelimiter: ;
+      rollback: []
+  - changeSet:
+      id: yaml-sqlfile-table-and-rows
+      author: Leonid-Efremov
+      comment: Objects created from an external file via the sqlFile tag
+      context: dev
+      changes:
+        - sqlFile:
+            path: sqlfile-probe-body.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            endDelimiter: ;
+      rollback:
+        - sql:
+            sql: DROP VIEW IF EXISTS ${catalog.default}.${schema.test_schema}.sqlfile_view; DROP TABLE IF EXISTS ${catalog.default}.${schema.test_schema}.sqlfile_table;
+            splitStatements: true
+            endDelimiter: ;

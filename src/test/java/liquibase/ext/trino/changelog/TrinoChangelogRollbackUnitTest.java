@@ -1,4 +1,4 @@
-package liquibase.ext.trino;
+package liquibase.ext.trino.changelog;
 
 import liquibase.Scope;
 import liquibase.change.Change;
@@ -6,6 +6,7 @@ import liquibase.change.core.EmptyChange;
 import liquibase.changelog.ChangeLogParameters;
 import liquibase.changelog.ChangeSet;
 import liquibase.changelog.DatabaseChangeLog;
+import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.ext.trino.database.TrinoDatabase;
 import liquibase.parser.ChangeLogParser;
 import liquibase.parser.ChangeLogParserFactory;

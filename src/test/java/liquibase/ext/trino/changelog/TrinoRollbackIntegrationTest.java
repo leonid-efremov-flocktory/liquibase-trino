@@ -1,7 +1,8 @@
-package liquibase.ext.trino;
+package liquibase.ext.trino.changelog;
 
 import liquibase.Liquibase;
 import liquibase.database.Database;
+import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.resource.ClassLoaderResourceAccessor;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;

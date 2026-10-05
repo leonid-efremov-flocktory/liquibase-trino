@@ -1,11 +1,11 @@
-package liquibase.ext.trino;
+package liquibase.ext.trino.database;
 
 import liquibase.CatalogAndSchema;
-import liquibase.ext.trino.database.TrinoDatabase;
 import liquibase.structure.core.Schema;
 import liquibase.structure.core.Table;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -75,5 +75,39 @@ class TrinoDatabaseUnitTest {
     @Test
     void caseSensitiveIsFalse() {
         assertFalse(db.isCaseSensitive());
+    }
+
+    @Test
+    void defaultProductNameIsTrino() {
+        assertEquals(TrinoDatabase.PRODUCT_NAME, db.getDatabaseProductName());
+    }
+
+    // Which connections this dialect claims is covered against a live Trino connection in
+    // TrinoDatabaseIntegrationTest.
+
+    // --- Identifier escaping ---
+
+    @Test
+    void columnNamesAreEscapedToLowerCase() {
+        assertEquals("id", db.escapeColumnName(null, null, null, "ID"));
+        assertEquals("md5sum", db.escapeColumnName(null, null, null, "MD5SUM"));
+        assertEquals("tag", db.escapeColumnName(null, null, null, "TAG"));
+    }
+
+    @Test
+    void columnNamesAreEscapedToLowerCaseWithFunctionFlag() {
+        // The overload the changelog readers use; it must lower-case just the same.
+        assertEquals("id", db.escapeColumnName(null, null, null, "ID", false));
+        assertEquals("dateexecuted", db.escapeColumnName(null, null, null, "DATEEXECUTED", true));
+    }
+
+    // --- Connecting ---
+
+    @Test
+    void setAutoCommitIsIgnored() {
+        // The Trino JDBC driver rejects setAutoCommit(false), and Trino runs DDL outside
+        // transactions, so the call has to be a no-op rather than an error.
+        assertDoesNotThrow(() -> db.setAutoCommit(false));
+        assertDoesNotThrow(() -> db.setAutoCommit(true));
     }
 }
