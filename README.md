@@ -31,7 +31,7 @@ driver.
 
 | File | Purpose |
 |---|---|
-| `database/TrinoDatabase.java` | `extends H2Database`. Overrides: `isCorrectDatabaseImplementation()` (product name `Trino`), `getShortName()` → `trino` (so `dbms="trino"` keeps working in changelogs), `getDefaultDriver()` → `io.trino.jdbc.TrinoDriver`, `getPriority()` = 510, `isCaseSensitive()` → `false` (Trino JDBC returns metadata in lower case), `unquotedObjectsAreUppercased = false` (Trino stores unquoted identifiers in lower case), `getCurrentDateTimeFunction()` → `CURRENT_TIMESTAMP`, `supportsSequences()` → `false`, `supportsDDLInTransaction()` → `false` plus a no-op `setAutoCommit()` (Trino runs DDL outside transactions and its driver does not support `setAutoCommit(false)`). |
+| `database/TrinoDatabase.java` | `extends H2Database`. Overrides: `isCorrectDatabaseImplementation()` (product name `Trino`), `getShortName()` → `trino` (so `dbms="trino"` keeps working in changelogs), `getDefaultDriver()` → `io.trino.jdbc.TrinoDriver`, `getPriority()` = 510, `isCaseSensitive()` → `false` (Trino JDBC returns metadata in lower case), `unquotedObjectsAreUppercased = false` (Trino stores unquoted identifiers in lower case), `getCurrentDateTimeFunction()` → `CURRENT_TIMESTAMP`, `supportsSequences()` → `false`, `supportsDDLInTransaction()` → `false` plus a no-op `setAutoCommit()` (Trino runs DDL outside transactions and its driver does not support `setAutoCommit(false)`), and `getReservedWords()` returning H2's `V2_RESERVED_WORDS` directly — see the note below. |
 | `sqlgenerator/TrinoSelectFromDatabaseChangeLogGenerator.java` | A copy of the base `SelectFromDatabaseChangeLogGenerator` **without** the `.toUpperCase()` on the column list. Even after lower-case escaping the base generator emits `SELECT ID, AUTHOR, ...`, while Trino stores column names in lower case. Priority 510, applies only to `TrinoDatabase`. |
 | `snapshot/TrinoSchemaSnapshotGenerator.java` | Schema snapshot via JDBC `getSchemas()` with case-insensitive matching on `catalog + schema`, raising `InvalidExampleException` on ambiguity. The base `SchemaSnapshotGenerator` fails on Trino with `Found multiple catalog/schemas matching iceberg_catalog.dev_migrations`. The `replaces()` method is mandatory: `SnapshotGeneratorChain` calls **every** generator by priority. |
 
@@ -150,7 +150,8 @@ Notes on individual tests:
 - `TrinoDatabaseUnitTest` — dialect properties that need no connection: short name,
   priority, default port, driver, identifier case, product name, plus the two that the shim
   exists for: lower-casing of escaped column names, and that `setAutoCommit` is a no-op because
-  the Trino driver rejects it. 16 tests.
+  the Trino driver rejects it. Also pins that reserved-word lookup and identifier escaping send
+  no version queries, which is the `SELECT version()` regression described above. 18 tests.
 - `TrinoSqlGeneratorsUnitTest` — the SQL both plugin generators emit, as strings: the lock
   table is created without a primary key and with `TIMESTAMP` rather than H2's `datetime`, and
   the changelog `SELECT` keeps its column list lower-case (the base generator upper-cases it),

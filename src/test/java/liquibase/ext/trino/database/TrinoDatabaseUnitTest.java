@@ -1,6 +1,8 @@
 package liquibase.ext.trino.database;
 
 import liquibase.CatalogAndSchema;
+import liquibase.database.MockDatabaseConnection;
+import liquibase.exception.DatabaseException;
 import liquibase.structure.core.Schema;
 import liquibase.structure.core.Table;
 import org.junit.jupiter.api.Test;
@@ -9,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Dialect properties of the shim that need no live Trino.
@@ -101,6 +104,33 @@ class TrinoDatabaseUnitTest {
         assertEquals("dateexecuted", db.escapeColumnName(null, null, null, "DATEEXECUTED", true));
     }
 
+    // --- Reserved words ---
+
+    @Test
+    void reservedWordLookupNeedsNoVersionQuery() {
+        // The Trino driver answers getDatabaseMajorVersion() by running "SELECT version()".
+        // H2Database.getReservedWords() calls it, and isReservedWord() is asked once per escaped
+        // identifier, so without the override every column cost a round-trip. db has no
+        // connection at all, so these calls would fail rather than merely be slow.
+        assertTrue(db.isReservedWord("select"));
+        assertTrue(db.isReservedWord("SELECT"));
+        assertFalse(db.isReservedWord("customer"));
+    }
+
+    @Test
+    void escapingIdentifiersSendsNoVersionQueries() throws DatabaseException {
+        CountingConnection conn = new CountingConnection();
+        TrinoDatabase database = new TrinoDatabase();
+        database.setConnection(conn);
+
+        for (int i = 0; i < 100; i++) {
+            assertEquals("col_" + i, database.escapeColumnName(null, null, null, "COL_" + i));
+        }
+
+        assertEquals(0, conn.majorVersionReads);
+        assertEquals(0, conn.productVersionReads);
+    }
+
     // --- Connecting ---
 
     @Test
@@ -109,5 +139,27 @@ class TrinoDatabaseUnitTest {
         // transactions, so the call has to be a no-op rather than an error.
         assertDoesNotThrow(() -> db.setAutoCommit(false));
         assertDoesNotThrow(() -> db.setAutoCommit(true));
+    }
+
+    /**
+     * Stands in for a Trino connection, counting the version reads that against a real cluster
+     * would each cost a {@code SELECT version()}.
+     */
+    private static final class CountingConnection extends MockDatabaseConnection {
+
+        private int majorVersionReads;
+        private int productVersionReads;
+
+        @Override
+        public int getDatabaseMajorVersion() {
+            majorVersionReads++;
+            return 464;
+        }
+
+        @Override
+        public String getDatabaseProductVersion() {
+            productVersionReads++;
+            return "464";
+        }
     }
 }

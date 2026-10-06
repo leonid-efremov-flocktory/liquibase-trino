@@ -10,6 +10,7 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * Minimal shim over {@link H2Database}. Liquibase selects a {@code Database}
@@ -108,6 +109,16 @@ public class TrinoDatabase extends H2Database {
     public boolean isCaseSensitive() {
         // Trino JDBC reports metadata in lower case.
         return false;
+    }
+
+    @Override
+    protected Set<String> getReservedWords() {
+        // H2Database reaches this same set, but only after getDatabaseMajorVersion(), which the
+        // Trino driver answers by running "SELECT version()". isReservedWord() asks for the set
+        // once per escaped identifier, so that costs one round-trip per column. The set H2 would
+        // have chosen does not depend on the cluster: it is V2 whenever the major version is >= 2,
+        // and Trino reports 464. Return it directly instead of deriving it from a query.
+        return V2_RESERVED_WORDS;
     }
 
     @Override
