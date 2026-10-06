@@ -45,6 +45,12 @@ public final class TrinoTestSupport {
 
     public static final String CHANGELOG_SCHEMA = "liquibase_changelog";
 
+    /**
+     * Tracking schema of the {@code <sqlFile>} fixtures, kept apart from {@link #CHANGELOG_SCHEMA}
+     * so that applying them neither reads nor destroys the main fixture's tracking table.
+     */
+    public static final String SQLFILE_CHANGELOG_SCHEMA = "liquibase_changelog_sqlfile";
+
     /** Schema name without the catalog, as used in {@code information_schema} filters. */
     public static final String FIXTURE_SCHEMA_NAME = "dev_test_schema";
     public static final String FIXTURE_SCHEMA = "iceberg_catalog." + FIXTURE_SCHEMA_NAME;
@@ -69,6 +75,9 @@ public final class TrinoTestSupport {
 
     private static final LabelExpression NO_LABELS = new LabelExpression();
 
+    /** Cached answer of {@link #isReachable()}: {@code null} until the first probe. */
+    private static Boolean reachable;
+
     private TrinoTestSupport() {
     }
 
@@ -83,21 +92,24 @@ public final class TrinoTestSupport {
     }
 
     /**
-     * Whether the stand is up.
+     * Whether the stand is up. Probed once per JVM and remembered: the answer cannot change
+     * mid-run, and every integration class asks it.
      * <p>
      * A real query, not {@code DriverManager.getConnection}: the Trino JDBC driver connects
      * lazily and happily returns a Connection for a dead port, so a connection-based probe
-     * would always report true and the assume-guards in the integration tests would never
-     * fire — the run would fail with a ConnectException inside {@code @BeforeAll} instead
-     * of skipping.
+     * would always report true and the {@code @EnabledIf} conditions would never fire — the
+     * run would fail with a ConnectException inside {@code @BeforeAll} instead of skipping.
      */
-    public static boolean isReachable() {
-        try {
-            queryFirstColumn("SELECT 1");
-            return true;
-        } catch (Exception e) {
-            return false;
+    public static synchronized boolean isReachable() {
+        if (reachable == null) {
+            try {
+                queryFirstColumn("SELECT 1");
+                reachable = true;
+            } catch (Exception e) {
+                reachable = false;
+            }
         }
+        return reachable;
     }
 
     public static Connection openRaw() throws Exception {
@@ -160,9 +172,14 @@ public final class TrinoTestSupport {
      * own schema, fixture objects in the {@code iceberg_catalog} catalog.
      */
     public static Database openChangelogDatabase() throws Exception {
+        return openChangelogDatabase(CHANGELOG_SCHEMA);
+    }
+
+    /** As {@link #openChangelogDatabase()}, with the tracking tables in the given schema. */
+    public static Database openChangelogDatabase(String changelogSchema) throws Exception {
         Database db = openDatabase();
-        db.setDefaultSchemaName(CHANGELOG_SCHEMA);
-        db.setLiquibaseSchemaName(CHANGELOG_SCHEMA);
+        db.setDefaultSchemaName(changelogSchema);
+        db.setLiquibaseSchemaName(changelogSchema);
         db.setLiquibaseCatalogName(db.getDefaultCatalogName());
         return db;
     }

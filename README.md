@@ -86,20 +86,20 @@ Requires JDK 17.
 ## Release
 
 Releases are driven by tags. Pushing `v*` runs
-[`.github/workflows/publish.yml`](.github/workflows/publish.yml), which:
+[`.github/workflows/test.yml`](.github/workflows/test.yml), which:
 
 1. verifies the tag matches the `<version>` in `pom.xml`;
-2. starts the test stand from `src/test/trino/docker-compose.yml` and waits until Trino
-   answers `SELECT 1`;
-3. runs `mvn test`;
-4. deploys to GitHub Packages — only if the tests pass.
+2. runs `./run-tests.sh` — brings the stand up, waits until Trino answers `SELECT 1`,
+   runs `mvn test`, tears the stand down.
+
+The artifact itself is not published from CI: consumers (e.g. `docker/liquibase`) pull it
+from [JitPack](https://jitpack.io), which builds the repository from the tag itself.
+`jitpack.yml` in the repository root tells JitPack to use JDK 17.
 
 ```bash
-git tag v0.1.1 && git push origin main && git push origin v0.1.1
+#git tag -f
+git tag v0.1.2 && git push origin main && git push origin v0.1.2
 ```
-
-The deploy step uses the workflow's built-in `GITHUB_TOKEN`. No additional secrets are
-needed for publishing from CI.
 
 ## Tests
 
@@ -115,11 +115,16 @@ Tests live in `src/test/java` (JUnit 5). Integration tests need the stand from
 ```
 
 Extra arguments after the command are passed through to Maven, e.g.
-`./run-tests.sh test -Dtest=TrinoRollbackIntegrationTest`.
+`./run-tests.sh test -Dtest=TrinoRollbackIntegrationTest`. If Maven is installed on the host
+the script uses it, otherwise it runs the build in a `maven:3.9-eclipse-temurin-17` container
+(Trino is reachable there via `host.docker.internal`). The Trino URL and user can be
+overridden with `TRINO_TEST_URL` / `TRINO_TEST_USER`.
 
-If Maven is not installed on the host, the script runs it inside a
-`maven:3.9-eclipse-temurin-17` container (Trino is reachable via `host.docker.internal`).
-The Trino URL and user can be overridden with `TRINO_TEST_URL` / `TRINO_TEST_USER`.
+The 28 tests that need no stand run in well under a second without it:
+
+```bash
+mvn test -Punit
+```
 
 All test classes share a single fixture, `src/test/resources/liquibase/ext/trino/test-changelog.xml`.
 
@@ -144,6 +149,11 @@ Three services to provide Trino + Iceberg working setup:
 | `silo` | `pgsty/silo` | S3-compatible object storage (a maintained MinIO fork) |
 | `iceberg-rest` | `apache/iceberg-rest-fixture` | Iceberg REST catalog over a SQLite-backed `JdbcCatalog` |
 | `trino` | `trinodb/trino:464` | the Trino cluster under test |
+
+Every service has a healthcheck, and Trino's runs a real query rather than a hit on
+`/v1/info` (which answers before the catalogs are loaded). So `docker compose up -d --wait`,
+which `run-tests.sh` uses, blocks until migrations can actually run, and neither the script nor
+CI polls for readiness. CI runs `./run-tests.sh` itself, so there is one implementation of that.
 
 Notes on individual tests:
 
@@ -178,8 +188,9 @@ Notes on individual tests:
   executing them, `rollback(1)` on v2 must restore the view and remove the rows v2
   inserted, and `rollback(1)` on v1 must drop the table and the view. Each step checks
   the resulting `DATABASECHANGELOG` contents and that the lock is released, so a
-  changelog row that outlives its changeset fails the run. `@AfterAll` leaves the fixture
-  applied so the objects stay visible.
+  changelog row that outlives its changeset fails the run. The class leaves the fixture rolled
+  back: the classes that read it get it back through `applyIfNeeded()`, and restoring it here
+  too would just apply the same changesets twice per run.
 - `TrinoReadCommandsIntegrationTest` — the commands that read the tracking table back rather
   than write to it: `status` (including `getChangeSetStatuses`, which must read back a stored
   checksum per changeset, and an empty unrun list), `history` (changesets in execution order
@@ -198,10 +209,14 @@ Notes on individual tests:
   `InvalidExampleException: Found multiple catalog/schemas matching` for a name shared across
   catalogs.
 - `TrinoChangelogFormatIntegrationTest` — the same objects expressed through `<sqlFile>`
-  instead of formatted-SQL includes, in XML, YAML and JSON. Confirms each format gets its own
-  parser, that `relativeToChangelogFile` finds the body file sitting next to the changelog, that
-  each format records its own changeset ids, and that all three roll back. The row text is
-  asserted on purpose: it is the only evidence the body file was read rather than skipped.
+  instead of formatted-SQL includes, in XML, YAML and JSON. One parameterized test confirms each
+  format reaches its own parser, that `relativeToChangelogFile` finds the body file sitting next
+  to the changelog, and that each format records its own changeset ids; a second test rolls the
+  XML one back. The row text is asserted on purpose: it is the only evidence the body file was
+  read rather than skipped. Rollback runs for XML only — all three fixtures hold the same
+  rollback SQL, so the other two would be the same run twice. These fixtures record their
+  changesets in their own tracking schema, `liquibase_changelog_sqlfile`, so applying them
+  neither reads nor destroys the main fixture's tracking table.
 - `TrinoChangelogRollbackUnitTest` — that an empty XML `<rollback/>` is parsed into an
   `EmptyChange`. Needs no running Trino. The *contents* of the rollback blocks are checked
   by `TrinoRollbackIntegrationTest`, which parses the same fixture and then executes the
@@ -212,10 +227,14 @@ method. The order annotation is load-bearing: each changeset can be rolled back 
 once, so an intermediate failing assertion would otherwise leave the stand in a state the
 next test does not expect.
 
-Integration tests skip when Trino is unreachable. The probe runs a real `SELECT 1`, not
-`DriverManager.getConnection` — the Trino JDBC driver connects lazily and returns a
-connection object even against a dead port, so a connection-based probe always reported
-reachable and every test failed inside `@BeforeAll` instead of skipping.
+Integration tests skip when Trino is unreachable: each class is annotated
+`@EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")`. An execution condition rather
+than an `assumeTrue` in `@BeforeAll`, so the class is disabled before any of its callbacks run
+and the `@AfterAll` cleanup does not have to repeat the probe. The probe runs a real
+`SELECT 1`, not `DriverManager.getConnection` — the Trino JDBC driver connects lazily and
+returns a connection object even against a dead port, so a connection-based probe always
+reported reachable and every test failed inside `@BeforeAll` instead of skipping. The answer is
+cached per JVM, since it cannot change mid-run.
 
 ## Known limitations
 

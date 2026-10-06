@@ -71,6 +71,14 @@ services:
     depends_on:
       iceberg-rest:
         condition: service_healthy
+    # A real query, not a hit on /v1/info: that endpoint answers before the catalogs are
+    # loaded. `docker compose up --wait` then blocks until the cluster can actually run
+    # migrations, so neither run-tests.sh nor CI has to poll for readiness.
+    healthcheck:
+      test: ["CMD", "trino", "--execute", "SELECT 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 60
 
 volumes:
   warehouse:

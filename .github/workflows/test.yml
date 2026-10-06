@@ -3,6 +3,10 @@ name: Test
 # Tests triggered by a tag: the stand from src/test/trino/docker-compose.yml
 # (Trino + Iceberg REST catalog + S3 storage) is brought up, then mvn test runs.
 #
+# The stand is brought up and torn down by run-tests.sh, the same script a developer runs
+# locally, so the readiness handling exists in one place: the Trino healthcheck in the compose
+# file runs a real query and `up --wait` blocks on it.
+#
 # No artifact publishing is needed: consumers (docker/liquibase) pull the plugin
 # from JitPack (https://jitpack.io), which builds the repository itself from the
 # git tag. jitpack.yml (JDK 17) in the repository root tells JitPack which JDK to use.
@@ -40,28 +44,7 @@ jobs:
             exit 1
           fi
 
-      - name: Start the stand
-        run: docker compose -f src/test/trino/docker-compose.yml up -d --wait
-
-      # Wait for a real query to succeed, not for the /v1/info response: it appears
-      # before the catalogs are loaded. Trino does not start until the iceberg_catalog
-      # is up, so this polling covers both the Iceberg REST catalog and the S3 storage.
-      - name: Wait for Trino to be ready
-        run: |
-          for _ in $(seq 1 60); do
-            if docker exec liquibase-trino-test trino --user smoke --execute "SELECT 1" >/dev/null 2>&1; then
-              echo "Trino is ready."
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Trino did not become ready in time." >&2
-          docker logs --tail 50 liquibase-trino-iceberg-rest >&2 || true
-          exit 1
-
-      - name: Run tests
-        run: mvn -B test
-
-      - name: Stop the stand
-        if: always()
-        run: docker compose -f src/test/trino/docker-compose.yml down -v
+      # `./run-tests.sh` = up --wait, mvn test, down -v — the same script a developer runs.
+      # Trino is reachable on localhost:8081 because compose publishes the port.
+      - name: Run tests against the stand
+        run: ./run-tests.sh

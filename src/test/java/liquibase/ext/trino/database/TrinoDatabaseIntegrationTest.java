@@ -6,12 +6,12 @@ import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.structure.core.Table;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks that a real connection selects {@link TrinoDatabase} by product name.
@@ -21,13 +21,13 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * {@link TrinoDatabaseUnitTest} and {@code TrinoMetadataSnapshotIntegrationTest}
  * (in the {@code snapshot} package).
  */
+@EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoDatabaseIntegrationTest {
 
     private static Database db;
 
     @BeforeAll
     static void connect() throws Exception {
-        assumeTrue(TrinoTestSupport.isReachable(), "Trino недоступен: " + TrinoTestSupport.url());
         db = TrinoTestSupport.openDatabase();
     }
 
@@ -48,8 +48,9 @@ class TrinoDatabaseIntegrationTest {
     @Test
     void selectedDialectLowersIdentifiers() {
         // Regression: the H2 dialect upper-cased unquoted identifiers while Trino stores them in
-        // lower case. Asserted on the dialect picked from a real connection, not on a
-        // hand-made new TrinoDatabase().
+        // lower case. TrinoDatabaseUnitTest asserts the same on a hand-made dialect; here it is
+        // asserted on the one the DatabaseFactory picked from a real connection, which is what
+        // the changelog commands actually get.
         assertEquals("databasechangelog", db.correctObjectName("DATABASECHANGELOG", Table.class));
     }
 }

@@ -5,7 +5,7 @@
 
     <groupId>io.github.leonid-efremov-flocktory</groupId>
     <artifactId>liquibase-trino</artifactId>
-    <version>0.1.1</version>
+    <version>0.1.2</version>
     <packaging>jar</packaging>
 
     <name>Liquibase Extension: Trino support (H2-based shim)</name>
@@ -156,5 +156,28 @@
             </plugin>
         </plugins>
     </build>
+
+    <!-- `mvn test -Punit` runs only the tests that need no Trino stand, which is instant and
+         needs no docker. The default build runs everything: the integration classes skip
+         themselves when the stand is unreachable. The split needs no tags in the test code —
+         surefire's excludes work off the class names the sources already follow. -->
+    <profiles>
+        <profile>
+            <id>unit</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <excludes>
+                                <exclude>**/*IntegrationTest.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>

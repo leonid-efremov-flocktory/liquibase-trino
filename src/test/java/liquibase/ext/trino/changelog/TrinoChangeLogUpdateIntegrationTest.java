@@ -5,36 +5,36 @@ import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.snapshot.SnapshotGeneratorFactory;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * A full Liquibase {@code update} run against a live Trino.
  * <p>
  * The stand is Iceberg, not the memory connector: Liquibase's tracking tables need
- * DELETE/UPDATE, which memory does not support. The fixture is applied once in
- * {@link #setup()} and the tests only check the outcome; direct queries are used purely
- * for verification.
+ * DELETE/UPDATE, which memory does not support. This is the one class that starts from
+ * scratch — it drops everything and applies the fixture in {@link #setup()}, so it does not
+ * depend on what ran before it. Direct queries are used purely for verification.
  */
+@EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoChangeLogUpdateIntegrationTest {
 
     private static Database db;
 
     @BeforeAll
     static void setup() throws Exception {
-        assumeTrue(TrinoTestSupport.isReachable(), "Trino недоступен: " + TrinoTestSupport.url());
         TrinoTestSupport.dropAll();
         db = TrinoTestSupport.openChangelogDatabase();
         TrinoTestSupport.update(db);
     }
 
-    // The tracking tables stay on purpose: the next test class sees an applied fixture
-    // through applyIfNeeded() and does not re-apply it. TrinoRollbackIntegrationTest
-    // does the final cleanup.
+    // The tracking tables stay on purpose: the classes that read them call applyIfNeeded(),
+    // which finds the fixture applied and does nothing. Restoring it is not this class's job,
+    // and applying it here as well would run the same changesets twice per suite.
 
     @Test
     void updateAppliesAllChangesetsAndCreatesTrackingTables() throws Exception {

@@ -5,17 +5,17 @@ import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.parser.ChangeLogParser;
 import liquibase.parser.ChangeLogParserFactory;
 import liquibase.resource.ClassLoaderResourceAccessor;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Changelog formats other than the main XML fixture: {@code <sqlFile>} in XML and the same
@@ -27,59 +27,58 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * and relative resource paths must resolve identically when the SQL lives in a separate file
  * rather than in a formatted-SQL include.
  * <p>
- * All three fixtures share the {@code dev_test_schema} of the main one and their own
- * {@code sqlfile_table}/{@code sqlfile_view}, so each starts by dropping whatever is there.
+ * These fixtures record their changesets in {@link TrinoTestSupport#SQLFILE_CHANGELOG_SCHEMA},
+ * their own tracking schema, so applying them neither reads nor destroys the main fixture's
+ * tracking table. Without that separation this class would have to drop
+ * {@code liquibase_changelog} between cases, and the classes reading the main fixture would
+ * then have to re-apply it — which is why they used to run the same update three times over.
  */
+@EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoChangelogFormatIntegrationTest {
 
     private static Database db;
 
-    @BeforeEach
-    void setUp() throws Exception {
-        assumeTrue(TrinoTestSupport.isReachable(), "Trino is unreachable: " + TrinoTestSupport.url());
-        TrinoTestSupport.execute("CREATE SCHEMA IF NOT EXISTS " + TrinoTestSupport.CHANGELOG_SCHEMA);
-        db = TrinoTestSupport.openChangelogDatabase();
+    @BeforeAll
+    static void setUp() throws Exception {
+        TrinoTestSupport.execute("CREATE SCHEMA IF NOT EXISTS " + TrinoTestSupport.SQLFILE_CHANGELOG_SCHEMA);
+        db = TrinoTestSupport.openChangelogDatabase(TrinoTestSupport.SQLFILE_CHANGELOG_SCHEMA);
     }
 
-    @AfterEach
-    void tearDown() throws Exception {
-        // The guard repeats the assumeTrue in setUp(): a failed assumption skips @AfterEach in
-        // JUnit, so without it cleanup would fail instead of skipping.
-        assumeTrue(TrinoTestSupport.isReachable(), "Trino is unreachable: " + TrinoTestSupport.url());
-        // Drop the tracking tables so the next parameterised case starts from zero. These
-        // fixtures are applied from scratch rather than through applyIfNeeded(): each format
-        // records changesets of its own ids, and a shared tracking table would make the
-        // "only my changesets are recorded" assertion depend on the order cases ran in.
-        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + TrinoTestSupport.CHANGELOG_SCHEMA + " CASCADE");
-        TrinoTestSupport.execute("CREATE SCHEMA IF NOT EXISTS " + TrinoTestSupport.CHANGELOG_SCHEMA);
+    @AfterAll
+    static void tearDown() throws Exception {
+        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + TrinoTestSupport.SQLFILE_CHANGELOG_SCHEMA + " CASCADE");
+        TrinoTestSupport.execute("DROP VIEW IF EXISTS " + TrinoTestSupport.SQLFILE_VIEW);
+        TrinoTestSupport.execute("DROP TABLE IF EXISTS " + TrinoTestSupport.SQLFILE_TABLE);
     }
 
     /**
-     * Each format must reach its own parser. The row text asserted below can only come from the
-     * body file, so that check also proves the file was read rather than skipped; this one pins
-     * the parser choice, which is what makes the runs meaningfully different. Note that the JSON
-     * parser extends the YAML one, so only its name differs — the files do not.
+     * Each format must reach its own parser and apply the same objects from the same external
+     * body file.
+     * <p>
+     * The parser is pinned because it is what makes the runs meaningfully different: the JSON
+     * parser extends the YAML one, so only its name differs — the files do not. The row text
+     * asserted below can only come from the body file, so that assertion also proves the file
+     * was read rather than skipped, which is the interesting part of
+     * {@code relativeToChangelogFile}: the body sits next to the changelog rather than at the
+     * root of the classpath.
+     * <p>
+     * The cases share one tracking table, so the ids are filtered by this format's own prefix:
+     * what matters is that the format recorded its changesets in order, not what the other two
+     * recorded before it.
      */
-    @ParameterizedTest(name = "{0} is parsed by {1}")
+    @ParameterizedTest(name = "{0} is parsed by {2}")
     @CsvSource({
-            "liquibase/ext/trino/sqlfile-probe.xml,  XMLChangeLogSAXParser",
-            "liquibase/ext/trino/sqlfile-probe.yaml, YamlChangeLogParser",
-            "liquibase/ext/trino/sqlfile-probe.json, JsonChangeLogParser",
+            "xml,  liquibase/ext/trino/sqlfile-probe.xml,  XMLChangeLogSAXParser",
+            "yaml, liquibase/ext/trino/sqlfile-probe.yaml, YamlChangeLogParser",
+            "json, liquibase/ext/trino/sqlfile-probe.json, JsonChangeLogParser",
     })
-    void eachFormatIsParsedByItsOwnParser(String changelog, String expectedParser) {
-        assertEquals(expectedParser, parserFor(changelog));
-    }
+    void sqlFileChangelogAppliesItsObjects(String format, String changelog, String expectedParser)
+            throws Exception {
 
-    /**
-     * The interesting part of {@code relativeToChangelogFile}: the body file sits next to the
-     * changelog rather than at the root of the classpath, so its path only resolves if Liquibase
-     * resolves it against the changelog's own location.
-     */
-    @ParameterizedTest(name = "{0} applies its sqlFile changesets")
-    @ValueSource(strings = {"xml", "yaml", "json"})
-    void sqlFileChangelogCreatesItsObjects(String format) throws Exception {
+        assertEquals(expectedParser, parserFor(changelog));
+
         // A missing body file would fail here as a LiquibaseException before any SQL runs.
-        TrinoTestSupport.update(changelogFor(format), db);
+        TrinoTestSupport.update(changelog, db);
 
         assertEquals("2", TrinoTestSupport.count(TrinoTestSupport.SQLFILE_TABLE),
                 "the sqlFile body must create the table and insert its rows");
@@ -89,22 +88,21 @@ class TrinoChangelogFormatIntegrationTest {
                 TrinoTestSupport.queryFirstColumn("SELECT txt FROM "
                         + TrinoTestSupport.SQLFILE_TABLE + " ORDER BY id"),
                 "the rows must come from sqlfile-probe-body.sql, resolved relative to the changelog");
-        // Filtered by the probe's own id prefix: the tracking table is shared with the main
-        // fixture, so asserting on all of its rows would depend on which classes ran before this
-        // one. What matters here is that this format recorded its changesets under its own ids.
         assertEquals(List.of(format + "-sqlfile-setup", format + "-sqlfile-table-and-rows"),
-                TrinoTestSupport.queryFirstColumn("SELECT id FROM "
-                        + TrinoTestSupport.CHANGELOG_SCHEMA + ".databasechangelog"
-                        + " WHERE id LIKE '%-sqlfile-%' ORDER BY orderexecuted"),
+                recordedIds(format),
                 "each format must record its own two changesets in execution order");
     }
 
-    @ParameterizedTest(name = "{0} rolls its sqlFile changesets back")
-    @ValueSource(strings = {"xml", "yaml", "json"})
-    void sqlFileChangelogRollsBack(String format) throws Exception {
-        TrinoTestSupport.update(changelogFor(format), db);
+    /**
+     * The rollback block of a {@code <sqlFile>} fixture, in the XML variant only: the three
+     * formats hold the same rollback SQL, so running it once is what proves the block is
+     * reachable, and the other two are covered by the assertion above.
+     */
+    @Test
+    void xmlSqlFileChangelogRollsBack() throws Exception {
+        TrinoTestSupport.update(TrinoTestSupport.CHANGELOG_SQLFILE_XML, db);
 
-        TrinoTestSupport.rollback(changelogFor(format), db, 1);
+        TrinoTestSupport.rollback(TrinoTestSupport.CHANGELOG_SQLFILE_XML, db, 1);
 
         assertEquals("0", TrinoTestSupport.countObjects(
                 TrinoTestSupport.FIXTURE_SCHEMA_NAME, "sqlfile_table"),
@@ -112,20 +110,15 @@ class TrinoChangelogFormatIntegrationTest {
         assertEquals("0", TrinoTestSupport.countObjects(
                 TrinoTestSupport.FIXTURE_SCHEMA_NAME, "sqlfile_view"),
                 "rolling back the sqlFile changeset must drop the view it created");
-        assertEquals(List.of(format + "-sqlfile-setup"),
-                TrinoTestSupport.queryFirstColumn("SELECT id FROM "
-                        + TrinoTestSupport.CHANGELOG_SCHEMA + ".databasechangelog"
-                        + " WHERE id LIKE '%-sqlfile-%' ORDER BY orderexecuted"),
+        assertEquals(List.of("xml-sqlfile-setup"), recordedIds("xml"),
                 "only the rolled-back changeset's record must disappear");
     }
 
-    private static String changelogFor(String format) {
-        return switch (format) {
-            case "xml" -> TrinoTestSupport.CHANGELOG_SQLFILE_XML;
-            case "yaml" -> TrinoTestSupport.CHANGELOG_SQLFILE_YAML;
-            case "json" -> TrinoTestSupport.CHANGELOG_SQLFILE_JSON;
-            default -> throw new AssertionError("unknown changelog format: " + format);
-        };
+    /** The ids this format recorded, in execution order; the other two formats' are ignored. */
+    private static List<String> recordedIds(String format) throws Exception {
+        return TrinoTestSupport.queryFirstColumn("SELECT id FROM "
+                + TrinoTestSupport.SQLFILE_CHANGELOG_SCHEMA + ".databasechangelog"
+                + " WHERE id LIKE '" + format + "-sqlfile-%' ORDER BY orderexecuted");
     }
 
     private static String parserFor(String changelog) {

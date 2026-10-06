@@ -13,6 +13,7 @@ import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.io.StringWriter;
 import java.util.ArrayList;
@@ -22,7 +23,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Liquibase commands that read the tracking table back rather than write to it:
@@ -34,10 +34,11 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * plugin's only SQL generator for reads, so a defect in it surfaces here as wrong output
  * rather than as an exception — which is why these assert on values, not on "did not throw".
  * <p>
- * The fixture is applied once in {@link #setup()} and only read from here. {@code tag} is
+ * The fixture is applied once for the whole run and only read from here. {@code tag} is
  * the exception: it writes a tag column, which {@link #tearDown()} clears.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoReadCommandsIntegrationTest {
 
     private static final String TAG = "release-1";
@@ -47,7 +48,6 @@ class TrinoReadCommandsIntegrationTest {
 
     @BeforeAll
     static void setup() throws Exception {
-        assumeTrue(TrinoTestSupport.isReachable(), "Trino is unreachable: " + TrinoTestSupport.url());
         TrinoTestSupport.applyIfNeeded();
         db = TrinoTestSupport.openChangelogDatabase();
         liquibase = TrinoTestSupport.liquibase(db);
@@ -55,9 +55,6 @@ class TrinoReadCommandsIntegrationTest {
 
     @AfterAll
     static void tearDown() throws Exception {
-        // The guard repeats the assumeTrue in setup(): a failed assumption skips @AfterAll in
-        // JUnit, so without it cleanup would fail instead of skipping.
-        assumeTrue(TrinoTestSupport.isReachable(), "Trino is unreachable: " + TrinoTestSupport.url());
         // tag() wrote a tag column; clearing it keeps the shared fixture in the state the
         // other classes expect. Plain SQL, since liquibase.tag(null) is rejected.
         TrinoTestSupport.execute("UPDATE " + TrinoTestSupport.CHANGELOG_SCHEMA

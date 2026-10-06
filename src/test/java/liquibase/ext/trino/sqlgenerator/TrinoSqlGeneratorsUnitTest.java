@@ -82,9 +82,8 @@ class TrinoSqlGeneratorsUnitTest {
     void selectKeepsColumnListLowerCase() {
         // The base generator runs the joined column list through .toUpperCase(); Trino stores
         // column names in lower case, so that override is what makes the query findable.
-        String sql = selectSql(new SelectFromDatabaseChangeLogStatement("ID", "AUTHOR", "FILENAME"));
-        assertEquals("SELECT id,author,filename FROM databasechangelog", sql);
-        assertFalse(sql.contains("ID"), "no column may be upper-cased: " + sql);
+        assertEquals("SELECT id,author,filename FROM databasechangelog",
+                selectSql(new SelectFromDatabaseChangeLogStatement("ID", "AUTHOR", "FILENAME")));
     }
 
     @Test

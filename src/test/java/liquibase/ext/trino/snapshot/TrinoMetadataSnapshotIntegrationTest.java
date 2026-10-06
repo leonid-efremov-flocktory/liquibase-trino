@@ -10,6 +10,7 @@ import liquibase.structure.core.Table;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -18,7 +19,6 @@ import java.sql.Statement;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Regression test: Liquibase must find tables that already exist in Trino.
@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * filter ({@code system.jdbc.tables}) is case-sensitive. {@code SnapshotGeneratorFactory.has(...)}
  * then failed to find an existing table and Liquibase retried the CREATE TABLE.
  */
+@EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoMetadataSnapshotIntegrationTest {
 
     private static final String SCHEMA = "liquibase_test";
@@ -38,7 +39,6 @@ class TrinoMetadataSnapshotIntegrationTest {
 
     @BeforeAll
     static void setup() throws Exception {
-        assumeTrue(TrinoTestSupport.isReachable(), "Trino недоступен: " + TrinoTestSupport.url());
         db = TrinoTestSupport.openDatabase();
         catalog = db.getDefaultCatalogName();
 
@@ -55,10 +55,6 @@ class TrinoMetadataSnapshotIntegrationTest {
 
     @AfterAll
     static void cleanup() throws Exception {
-        // The guard repeats the assumeTrue in setup(): a failed assumption skips @AfterAll in
-        // JUnit, so without it cleanup would fail with ConnectException on an unreachable
-        // Trino instead of skipping.
-        assumeTrue(TrinoTestSupport.isReachable(), "Trino недоступен: " + TrinoTestSupport.url());
         try (Connection c = TrinoTestSupport.openRaw(); Statement st = c.createStatement()) {
             st.execute("DROP TABLE IF EXISTS " + SCHEMA + "." + TABLE);
             st.execute("DROP SCHEMA IF EXISTS " + SCHEMA);

@@ -8,10 +8,10 @@ import liquibase.snapshot.SnapshotGeneratorFactory;
 import liquibase.structure.core.Schema;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Schema lookup through {@link TrinoSchemaSnapshotGenerator}.
@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * {@link TrinoMetadataSnapshotIntegrationTest} covers table lookup, which goes through a
  * different generator.
  */
+@EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoSchemaSnapshotIntegrationTest {
 
     private static final String SYSTEM_CATALOG = "system";
@@ -39,7 +40,6 @@ class TrinoSchemaSnapshotIntegrationTest {
 
     @BeforeAll
     static void setup() throws Exception {
-        assumeTrue(TrinoTestSupport.isReachable(), "Trino is unreachable: " + TrinoTestSupport.url());
         TrinoTestSupport.applyIfNeeded();
         db = TrinoTestSupport.openDatabase();
         catalog = db.getDefaultCatalogName();
