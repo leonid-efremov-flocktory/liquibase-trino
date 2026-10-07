@@ -87,35 +87,58 @@ lossy-but-valid change instead of the object being dropped.
 
 ## Snapshot and generate-changelog
 
-Both commands work off the schema you give them. **Name the schema explicitly.** There are
-two ways, and both are verified against the test stand:
+Both commands read a live Trino and emit what is already there. The schema has to be named, and
+getting it wrong is silent rather than loud — so name it:
 
 ```bash
-# 1. --schemas works
-liquibase --url="jdbc:trino://host:8081/iceberg_catalog" \
-          --schemas=dev_migrations snapshot
-
-# 2. put the schema in the URL — same result
-liquibase --url="jdbc:trino://host:8081/iceberg_catalog/dev_migrations" \
-          snapshot
+liquibase --url="jdbc:trino://trino:8081/iceberg_catalog" \
+          --username=trino \
+          --schemas=warehouse \
+          generate-changelog --changelog-file=my_database_structure.trino.sql
 ```
 
-Leaving it out does **not** fail — that is the part worth knowing:
+With a URL that names only a catalog (`.../iceberg_catalog` and no schema), Trino reports no
+session schema at all. Liquibase then carries a null schema, renders it as
+`iceberg_catalog.DEFAULT`, matches no real schema, and the command returns the catalog alone —
+no error, just an empty result. The same fix applies to `snapshot`, and putting the schema in
+the URL (`jdbc:trino://trino:8081/iceberg_catalog/warehouse`) works too.
 
-| URL | Trino session `current_schema` | Result with no schema named |
-| --- | --- | --- |
-| `jdbc:trino://host:8081/iceberg_catalog` | `NULL` | snapshot contains the catalog and nothing else |
-| `jdbc:trino://host:8081/iceberg_catalog/dev_migrations` | `dev_migrations` | works |
+Two details of the output are not obvious:
 
-A URL that names only a catalog leaves Trino with no session schema at all, and it reports
-that as SQL `NULL` rather than as a name. `TrinoDatabase.getConnectionSchemaName()` returns
-`null`, `getDefaultSchema()` then carries a null schema, and that renders as the literal
-`iceberg_catalog.DEFAULT`. No such schema exists, the snapshot generators match nothing, and
-the command exits successfully with a document holding only the catalog object. There is no
-warning.
+- **the `.trino.sql` suffix is required.** Liquibase picks the SQL serializer from the file
+  extension, and refuses a bare `.sql` name because it cannot tell which dialect's SQL
+  formatting to apply. `.trino.sql` selects Trino's.
+- **objects come out as verbatim `SHOW CREATE` text**, not as `<createTable>`. Nothing is lost
+  this way: a structured create has nowhere to put `partitioning`, `location`, `format`, or a
+  table comment, and column types read from `information_schema` are lossy. The same reasoning
+  applies to the `trino.ddl` attribute on a `snapshot`.
 
-Liquibase logs the schema it settled on as `Set default schema name to <name>`; if that line
-is missing from the log, the schema was never resolved.
+
+### Splitting the generated file into one file per object
+
+Liquibase writes the whole snapshot to one file. Splitting it is left to the tooling around the
+command rather than built into the plugin: the changesets are already delimited in the output,
+one per object, so the file can be cut on that marker.
+
+```bash
+liquibase ... generate-changelog --changelog-file=my_database_structure.trino.sql
+
+# one changeset per object already; split the file on the marker
+awk '
+  /^-- changeset / { if (out) close(out); n++; out = sprintf("%03d.sql", n) }
+  out { print > out }
+' my_database_structure.trino.sql
+```
+
+Each resulting file holds one changeset — the verbatim `CREATE TABLE` or `CREATE VIEW` plus its
+header — and can be included from a changelog with `<sqlFile>`, or left as a standalone script.
+If you prefer one directory per object, extend the same loop with `mkdir` on the `changeset`
+line; the id in the marker is unique, so it works as a directory name.
+
+Note that the `location = 's3://…'` in a generated `CREATE TABLE` points at the storage the
+table was read from, so a replayed file recreates the table in the same place rather than a new
+one. See [Known limitations](#known-limitations).
+
 
 ## Why the DDL is carried verbatim
 
@@ -371,7 +394,42 @@ cached per JVM, since it cannot change mid-run.
 
 The list below is duplicated from the README's "Known limitations", which is the user-facing
 copy; see there for the full statements.
+- **`diff` reports a difference that `diffChangelog` then does nothing about.** A table that
+  differs only in its connector properties — `format`, `format_version`, `partitioning`,
+  `location`, or a comment — has no structural field to differ in; the difference lives only in
+  the `trino.ddl` attribute. Core's `DefaultDatabaseObjectComparator` compares the union of
+  attribute names generically, so it does detect this: `diff` lists the table as *changed*. But
+  `TrinoDdlChangeGenerator` implements `MissingObjectChangeGenerator` only, so nothing generates
+  a change for it and `diffChangelog` writes an empty changelog. The user is told the schemas
+  differ and handed nothing to do about it. Both halves are pinned by tests.
 
+  Closing it needs a `ChangedObjectChangeGenerator` that emits a drop-and-recreate from the
+  verbatim statement, which would destroy data on every `format` tweak — a design decision, not
+  a bug fix.
+- **A column that cannot be mapped to a JDBC type still fails the whole command.** Table and view
+  reads are contained per object, but column metadata is read by core's
+  `ColumnSnapshotGenerator`, whose `addTo` runs outside any generator this plugin can wrap. A
+  `type not supported` there aborts `snapshot` and `generate-changelog` regardless of the guards
+  below. Fixing it means registering a Trino column generator, which is a larger change than the
+  per-object containment it was scoped to.
+- **An object that cannot be read faithfully is left out of the snapshot, with a warning.** This
+  covers both failure paths — the metadata read and the `SHOW CREATE` read — and it applies the same
+  way to a table and to a view, because `TrinoDdlFetcher` is the single place that decides. The
+  command succeeds; the object does not appear in the generated changelog. The warning naming it is
+  the only trace, so do not run these commands with warnings filtered out.
+
+  The alternative would be to keep the object and let core reconstruct a `CREATE TABLE` from
+  `information_schema`, which is what an earlier version did for tables. That is not a degraded copy
+  of the object but a different one: `SHOW CREATE TABLE` can refuse a table that Trino does not
+  consider an Iceberg table at all — a catalog over one metastore routinely holds leftovers of
+  another connector — and such a table is described by `external_location`, `format` and `serde`,
+  none of which have a column in `information_schema`. Applying that changelog would create a new,
+  empty Iceberg table where the original was. An absent object is recoverable; a wrong one is not.
+
+  One consequence worth knowing: if *every* object in the schema is skipped, the change set is empty
+  and no changelog file is written at all. The command still succeeds — check the warnings, not the
+  file's existence. Verified by `TrinoSnapshotFailureIntegrationTest`,
+  `TrinoTableSnapshotGeneratorUnitTest` and `TrinoDdlFetcherUnitTest`.
 - The schema must be named for `snapshot` and `generate-changelog`, and omitting it is silent.
 - Verbatim DDL cannot express anything Trino does not print — the constraint types above.
 - A generated changelog replays only against the same catalog and schema; the DDL carries

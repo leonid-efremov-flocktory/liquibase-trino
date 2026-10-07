@@ -30,7 +30,7 @@ PostgreSQL is the nearest dialect, but it cannot be used: Liquibase runs
 | `status`, `history`, `tag`, `tagExists` | yes | Go through `TrinoSelectFromDatabaseChangeLogGenerator`. |
 | `update-sql` | yes | Used by the golden tests. |
 | `snapshot` | yes | Emits the verbatim DDL as the `trino.ddl` attribute on tables and views. Needs the schema named — see below. |
-| `diff` | partially | The comparison is structural; the verbatim `trino.ddl` attribute is not part of it. The `diff` command itself is not covered by a test. |
+| `diff`, `diffChangelog` | partially | A difference confined to `trino.ddl` is detected and reported, but no change is generated for it. Covered by `TrinoDiffIntegrationTest` and `TrinoDiffChangelogIntegrationTest`; see [Known limitations](#known-limitations). |
 | `dropAll` | no | Reads foreign keys through the JDBC metadata API, which Trino does not have. |
 
 ## Dependencies
@@ -92,7 +92,7 @@ Releases are driven by tags. Pushing `v*` runs
 
 ```bash
 # git tag -f
-git tag v0.1.3 && git push origin main && git push origin v0.1.3
+git tag v0.2.0 && git push origin main && git push origin v0.2.0
 ```
 
 ## Tests
@@ -114,15 +114,11 @@ the script uses it, otherwise it runs the build in a `maven:3.9-eclipse-temurin-
 (Trino is reachable there via `host.docker.internal`). The Trino URL and user can be
 overridden with `TRINO_TEST_URL` / `TRINO_TEST_USER`.
 
-**89 tests in total: 54 need the stand, 35 run without it.** The 35 take well under a second:
+**128 tests in total: 81 need the stand, 47 run without it.** The 47 take well under a second:
 
 ```bash
-mvn test -Punit
+mvn test -Dtest='TrinoDatabaseUnitTest,TrinoDdlFetcherUnitTest,TrinoSqlGeneratorsUnitTest,TrinoChangelogRollbackUnitTest'
 ```
-
-That profile excludes `**/*IntegrationTest.java`. It collects 36 and reports 1 skipped —
-the whole `TrinoGoldenSqlTest` class, whose `@EnabledIf` probe disables it when Trino is
-unreachable.
 
 All test classes share a single fixture, `src/test/resources/liquibase/ext/trino/test-changelog.xml`.
 
@@ -135,7 +131,7 @@ src/test/java/liquibase/ext/trino/
 ├── database/                      # the dialect: properties, and picking it from a connection
 ├── sqlgenerator/                  # the SQL the generators emit
 ├── changelog/                     # update, rollback, status/history/tag, changelog formats
-├── snapshot/                      # finding existing objects, and the two commands end to end
+├── snapshot/                      # finding existing objects, the commands end to end, diff, and
 └── golden/                        # the SQL every supported change type produces, pinned
 ```
 

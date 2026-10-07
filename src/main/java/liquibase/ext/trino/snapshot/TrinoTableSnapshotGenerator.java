@@ -45,15 +45,27 @@ public class TrinoTableSnapshotGenerator extends TableSnapshotGenerator {
         return new Class[]{TableSnapshotGenerator.class};
     }
 
+/**
+     * Snapshots the table, or nothing at all if it cannot be snapshotted faithfully.
+     * <p>
+     * A failure is confined to the object it happened on. The base class throws on a connection
+     * that dropped mid-run, on a type it cannot map, on metadata it cannot read — and
+     * {@code SnapshotGeneratorChain} lets all of that escape, aborting the command over one table out
+     * of hundreds.
+     * <p>
+     * Both decisions are delegated. {@link TrinoDdlFetcher#attachVerbatimDdl} records the verbatim
+     * statement and reports whether the table can be represented without it — and this is the only
+     * place left that can drop the table, because it was already found through the cached metadata
+     * by the time its statement is read.
+     */
     @Override
     protected DatabaseObject snapshotObject(DatabaseObject example, DatabaseSnapshot snapshot)
             throws DatabaseException {
-        DatabaseObject table = super.snapshotObject(example, snapshot);
-        if (table instanceof Table) {
-            String ddl = TrinoDdlFetcher.ddlFor(table, snapshot.getDatabase());
-            if (ddl != null) {
-                table.setAttribute(TrinoDdlFetcher.DDL_ATTRIBUTE, ddl);
-            }
+        Database database = snapshot.getDatabase();
+        DatabaseObject table = TrinoDdlFetcher.confinedToObject(example, database,
+                "could not be snapshotted", () -> super.snapshotObject(example, snapshot));
+        if (table instanceof Table && !TrinoDdlFetcher.attachVerbatimDdl(table, database)) {
+            return null;
         }
         return table;
     }

@@ -40,15 +40,27 @@ public class TrinoViewSnapshotGenerator extends ViewSnapshotGenerator {
         return new Class[]{ViewSnapshotGenerator.class};
     }
 
+    /**
+ * Snapshots the view, or nothing at all if it cannot be snapshotted faithfully.
+ * <p>
+ * A failure is confined to the view it happened on. {@code ViewSnapshotGenerator} reads the body
+ * through {@link liquibase.ext.trino.database.TrinoDatabase#getViewDefinition}, which throws, and
+ * {@code SnapshotGeneratorChain} lets that escape and aborts the command over one view.
+ * <p>
+ * The second decision is delegated rather than repeated: {@link TrinoDdlFetcher#attachVerbatimDdl}
+ * reads the verbatim statement and reports whether the view can be represented without it. The same
+ * call serves a table, and the same rule applies to both — a view whose {@code COMMENT} or
+ * {@code SECURITY DEFINER} did not survive into {@code CreateViewChange} is not a degraded copy of
+ * the original either.
+ */
     @Override
     protected DatabaseObject snapshotObject(DatabaseObject example, DatabaseSnapshot snapshot)
             throws DatabaseException {
-        DatabaseObject view = super.snapshotObject(example, snapshot);
-        if (view instanceof View) {
-            String ddl = TrinoDdlFetcher.ddlFor(view, snapshot.getDatabase());
-            if (ddl != null) {
-                view.setAttribute(TrinoDdlFetcher.DDL_ATTRIBUTE, ddl);
-            }
+        Database database = snapshot.getDatabase();
+        DatabaseObject view = TrinoDdlFetcher.confinedToObject(example, database,
+                "could not be snapshotted", () -> super.snapshotObject(example, snapshot));
+        if (view instanceof View && !TrinoDdlFetcher.attachVerbatimDdl(view, database)) {
+            return null;
         }
         return view;
     }
