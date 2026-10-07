@@ -16,7 +16,7 @@ import liquibase.structure.core.View;
  * {@code SELECT} — no {@code COMMENT}, no {@code SECURITY DEFINER}. Liquibase's own
  * {@code <createView>} change can express neither: {@code remarks} is emitted only for a fixed list
  * of database classes that Trino is not part of, and security mode has no field at all. The
- * attribute {@link TrinoDdlFetcher#DDL_ATTRIBUTE} carries the whole statement instead.
+ * attribute {@link TrinoDatabase#DDL_ATTRIBUTE} carries the whole statement instead.
  */
 public class TrinoViewSnapshotGenerator extends ViewSnapshotGenerator {
 

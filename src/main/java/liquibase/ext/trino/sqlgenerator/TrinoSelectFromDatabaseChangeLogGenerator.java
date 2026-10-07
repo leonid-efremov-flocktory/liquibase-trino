@@ -12,13 +12,16 @@ import liquibase.statement.core.SelectFromDatabaseChangeLogStatement;
 import liquibase.util.StringUtil;
 
 import java.util.Arrays;
-import java.util.Iterator;
-import java.util.List;
 
 /**
- * Copy of the base generator without its {@code .toUpperCase()} on the column list: even
- * after lower-case escaping, the base generator emits {@code SELECT ID, AUTHOR, ...},
- * while Trino stores column names in lower case.
+ * Delegated to {@link SelectFromDatabaseChangeLogGenerator}, which owns the where-clause, the
+ * {@code ORDER BY} clause and all escaping. Only two things in its output are corrected:
+ * <ul>
+ *     <li>the base generator runs the joined column list through {@code .toUpperCase()}, emitting
+ *     {@code SELECT ID, AUTHOR, ...}, while Trino stores column names in lower case;</li>
+ *     <li>the base generator emits {@code LIMIT} only for Oracle/MySQL/PostgreSQL/DB2, and
+ *     {@code TrinoDatabase} extends {@code H2Database}, so the clause is dropped.</li>
+ * </ul>
  */
 public class TrinoSelectFromDatabaseChangeLogGenerator extends SelectFromDatabaseChangeLogGenerator {
 
@@ -34,49 +37,46 @@ public class TrinoSelectFromDatabaseChangeLogGenerator extends SelectFromDatabas
 
     @Override
     public Sql[] generateSql(SelectFromDatabaseChangeLogStatement statement, final Database database, SqlGeneratorChain sqlGeneratorChain) {
-        List<ColumnConfig> columnsToSelect = Arrays.asList(statement.getColumnsToSelect());
+        String sql = lowerCaseColumnList(statement, database, super.generateSql(statement, database, sqlGeneratorChain)[0].toSql());
+
+        if (statement.getLimit() != null) {
+            sql += " LIMIT " + statement.getLimit();
+        }
+
+        return new Sql[]{
+                new UnparsedSql(sql)
+        };
+    }
+
+    /**
+     * Undoes the base generator's {@code .toUpperCase()} on the column list by rebuilding that list
+     * the way the base does and substituting it back, rather than lower-casing the whole statement,
+     * which would corrupt case-sensitive literals in the where-clause.
+     */
+    private static String lowerCaseColumnList(SelectFromDatabaseChangeLogStatement statement, Database database, String sql) {
+        String columns = joinColumnList(statement, database);
+        String upperCased = columns.toUpperCase();
+
+        if (!sql.contains(upperCased)) {
+            // The base generator no longer upper-cases the column list, so this override is now a
+            // no-op that would silently start emitting whatever it does. Fail loudly instead.
+            throw new IllegalStateException("Expected the upper-cased column list \"" + upperCased + "\" in: " + sql);
+        }
+
+        return sql.replace(upperCased, columns);
+    }
+
+    private static String joinColumnList(SelectFromDatabaseChangeLogStatement statement, Database database) {
         ObjectQuotingStrategy currentStrategy = database.getObjectQuotingStrategy();
         database.setObjectQuotingStrategy(ObjectQuotingStrategy.LEGACY);
         try {
-            String sql = "SELECT " + StringUtil.join(columnsToSelect, ",", (StringUtil.StringUtilFormatter<ColumnConfig>) column -> {
+            return StringUtil.join(Arrays.asList(statement.getColumnsToSelect()), ",", (StringUtil.StringUtilFormatter<ColumnConfig>) column -> {
                 if ((column.getComputed() != null) && column.getComputed()) {
                     return column.getName();
                 } else {
                     return database.escapeColumnName(null, null, null, column.getName());
                 }
-            }) + " FROM " +
-                    database.escapeTableName(database.getLiquibaseCatalogName(), database.getLiquibaseSchemaName(), database.getDatabaseChangeLogTableName());
-
-            SelectFromDatabaseChangeLogStatement.WhereClause whereClause = statement.getWhereClause();
-            if (whereClause != null) {
-                sql += whereClause.generateSql(database);
-            }
-
-            if ((statement.getOrderByColumns() != null) && (statement.getOrderByColumns().length > 0)) {
-                sql += " ORDER BY ";
-                Iterator<String> orderBy = Arrays.asList(statement.getOrderByColumns()).iterator();
-
-                while (orderBy.hasNext()) {
-                    String orderColumn = orderBy.next();
-                    String[] orderColumnData = orderColumn.split(" ");
-                    sql += database.escapeColumnName(null, null, null, orderColumnData[0]);
-                    if (orderColumnData.length == 2) {
-                        sql += " ";
-                        sql += orderColumnData[1].toUpperCase();
-                    }
-                    if (orderBy.hasNext()) {
-                        sql += ", ";
-                    }
-                }
-            }
-            
-            if (statement.getLimit() != null) {
-                sql += " LIMIT " + statement.getLimit();
-            }
-
-            return new Sql[]{
-                    new UnparsedSql(sql)
-            };
+            });
         } finally {
             database.setObjectQuotingStrategy(currentStrategy);
         }

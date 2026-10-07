@@ -139,7 +139,7 @@ class TrinoDdlFetcherUnitTest {
 
         assertTrue(TrinoDdlFetcher.attachVerbatimDdl(table, new WorkingTrinoDatabase()));
         assertEquals("CREATE TABLE iceberg_catalog.dev_test_schema.broken (id integer)",
-                table.getAttribute(TrinoDdlFetcher.DDL_ATTRIBUTE, String.class),
+                table.getAttribute(TrinoDatabase.DDL_ATTRIBUTE, String.class),
                 "a readable table must keep its statement, minus the trailing semicolon");
     }
 
@@ -150,7 +150,7 @@ class TrinoDdlFetcherUnitTest {
         Table table = table();
 
         assertTrue(TrinoDdlFetcher.attachVerbatimDdl(table, db));
-        assertEquals(db.ddl, table.getAttribute(TrinoDdlFetcher.DDL_ATTRIBUTE, String.class),
+        assertEquals(db.ddl, table.getAttribute(TrinoDatabase.DDL_ATTRIBUTE, String.class),
                 "a statement without a trailing semicolon must not lose its last character");
     }
 
@@ -163,7 +163,7 @@ class TrinoDdlFetcherUnitTest {
         assertTrue(TrinoDdlFetcher.attachVerbatimDdl(table, db),
                 "an object that no longer exists server-side has no statement, which is not a "
                         + "failure: the object stays, exactly as it did before this change");
-        assertNull(table.getAttribute(TrinoDdlFetcher.DDL_ATTRIBUTE, String.class),
+        assertNull(table.getAttribute(TrinoDatabase.DDL_ATTRIBUTE, String.class),
                 "and nothing is recorded for it");
     }
 

@@ -18,9 +18,6 @@ import liquibase.structure.core.View;
  */
 final class TrinoDdlFetcher {
 
-    /** Attribute the statement is stored under on the snapshotted relation. */
-    static final String DDL_ATTRIBUTE = "trino.ddl";
-
     private TrinoDdlFetcher() {
     }
 
@@ -91,7 +88,7 @@ final class TrinoDdlFetcher {
                 () -> {
                     String ddl = readVerbatim(object, database);
                     if (ddl != null) {
-                        object.setAttribute(DDL_ATTRIBUTE, ddl);
+                        object.setAttribute(TrinoDatabase.DDL_ATTRIBUTE, ddl);
                     }
                     return Boolean.TRUE;
                 }) != null;

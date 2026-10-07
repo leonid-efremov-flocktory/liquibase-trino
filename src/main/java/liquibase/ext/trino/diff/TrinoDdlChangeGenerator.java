@@ -9,6 +9,7 @@ import liquibase.diff.output.changelog.ChangeGeneratorChain;
 import liquibase.diff.output.changelog.MissingObjectChangeGenerator;
 import liquibase.ext.trino.database.TrinoDatabase;
 import liquibase.structure.DatabaseObject;
+import liquibase.structure.core.Column;
 import liquibase.structure.core.Table;
 import liquibase.structure.core.View;
 
@@ -33,9 +34,6 @@ import liquibase.structure.core.View;
  * reproduces the object exactly, including its comments and storage properties.
  */
 public class TrinoDdlChangeGenerator extends AbstractChangeGenerator implements MissingObjectChangeGenerator {
-
-    /** Attribute the snapshot generators store the statement under. */
-    public static final String DDL_ATTRIBUTE = "trino.ddl";
 
     @Override
     public int getPriority(Class<? extends DatabaseObject> objectType, Database database) {
@@ -68,7 +66,7 @@ public class TrinoDdlChangeGenerator extends AbstractChangeGenerator implements 
         if (!(missingObject instanceof Table) && !(missingObject instanceof View)) {
             return EMPTY_CHANGE;
         }
-        String ddl = missingObject.getAttribute(DDL_ATTRIBUTE, String.class);
+        String ddl = missingObject.getAttribute(TrinoDatabase.DDL_ATTRIBUTE, String.class);
         if (ddl == null) {
             // No verbatim statement was captured. Deferring to the chain lets core produce its
             // lossy-but-valid change instead of dropping the object entirely.
@@ -108,7 +106,7 @@ public class TrinoDdlChangeGenerator extends AbstractChangeGenerator implements 
         if (!(missingObject instanceof Table) || ((Table) missingObject).getColumns() == null) {
             return;
         }
-        for (liquibase.structure.core.Column column : ((Table) missingObject).getColumns()) {
+        for (Column column : ((Table) missingObject).getColumns()) {
             control.setAlreadyHandledMissing(column);
         }
     }

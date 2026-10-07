@@ -178,14 +178,6 @@ Services in `src/test/trino/docker-compose.yml`:
   `--schemas=system.runtime` looks for `iceberg_catalog.runtime` and finds nothing. There is no
   way to snapshot across catalogs, and no API for "every schema this connection can see" — the
   schemas have to be enumerated.
-- `TrinoSelectFromDatabaseChangeLogGenerator` duplicates logic from liquibase-core's
-  `SelectFromDatabaseChangeLogGenerator`, which is licensed FSL-1.1-ALv2. The base class
-  exposes no protected seam (only `generateSql` and `validate`), so the override could
-  not be reduced to a single method without an upstream change. All LPM community
-  extensions currently use FSL-1.1-ALv2 rather than MIT; if this plugin is contributed
-  upstream, expect the license to be relicensed to match.
-- `LIMIT` in the read generator is unreachable: it is pinned by a unit test, but nothing in
-  `liquibase-core` 5.0.4 calls `setLimit`.
 - **`update` after `rollback` in the same JVM can silently do nothing.** Liquibase 5 added a
   fast path to `update`: before taking the lock, `AbstractUpdateCommandStep` asks
   `FastCheckService` whether there is anything to run. That service caches its answer per

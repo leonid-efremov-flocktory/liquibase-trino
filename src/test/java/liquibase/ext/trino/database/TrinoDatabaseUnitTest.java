@@ -31,8 +31,8 @@ class TrinoDatabaseUnitTest {
     }
 
     @Test
-    void defaultPortIsHttps() {
-        assertEquals(443, db.getDefaultPort());
+    void defaultPortIs8080() {
+        assertEquals(8080, db.getDefaultPort());
     }
 
     @Test

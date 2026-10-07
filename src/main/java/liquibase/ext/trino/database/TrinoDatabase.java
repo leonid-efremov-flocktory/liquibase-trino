@@ -13,7 +13,6 @@ import liquibase.structure.DatabaseObject;
 import liquibase.structure.core.ForeignKey;
 import liquibase.structure.core.Index;
 import liquibase.structure.core.PrimaryKey;
-import liquibase.structure.core.Schema;
 import liquibase.structure.core.Table;
 import liquibase.structure.core.UniqueConstraint;
 import liquibase.structure.core.View;
@@ -40,7 +39,14 @@ public class TrinoDatabase extends H2Database {
     public static final String PRODUCT_NAME = "Trino";
     public static final int TRINO_PRIORITY_DATABASE = 510;
 
-    /** The two parts of {@code <catalog>.information_schema.views} that need escaping together. */
+    /**
+     * Attribute the verbatim {@code CREATE} statement is stored under on a snapshotted table or
+     * view: written by the snapshot generators, read by {@code TrinoDdlChangeGenerator}.
+     */
+    public static final String DDL_ATTRIBUTE = "trino.ddl";
+
+    /** The two fixed parts of the {@code <catalog>.information_schema.views} reference that
+     * {@link #qualify} builds for the view-definition read. */
     private static final String INFORMATION_SCHEMA = "information_schema";
     private static final String VIEWS = "views";
 
@@ -166,7 +172,8 @@ public class TrinoDatabase extends H2Database {
 
     @Override
     public Integer getDefaultPort() {
-        return 443;
+        // Trino's HTTP endpoint listens on 8080;443 (HTTPS) was a mistake.
+        return 8080;
     }
 
     @Override
@@ -245,7 +252,7 @@ public class TrinoDatabase extends H2Database {
     public String getViewDefinition(CatalogAndSchema schema, String name) throws DatabaseException {
         CatalogAndSchema target = schema.customize(this);
         return queryForString("SELECT view_definition FROM "
-                + escapeObjectName(target.getCatalogName(), INFORMATION_SCHEMA, VIEWS, Schema.class)
+                + qualify(target.getCatalogName(), INFORMATION_SCHEMA, VIEWS)
                 + " WHERE table_schema = '" + escapeStringForDatabase(target.getSchemaName())
                 + "' AND table_name = '" + escapeStringForDatabase(name) + "'");
     }
@@ -300,7 +307,9 @@ public class TrinoDatabase extends H2Database {
     }
 
     /**
-     * Builds the name for a {@code SHOW CREATE} statement, quoting only where Trino requires it.
+     * Builds a fully qualified name — used by {@code SHOW CREATE} and by
+     * {@link #getViewDefinition} for the {@code information_schema.views} read — quoting only
+     * where Trino requires it.
      * <p>
      * Deliberately not {@code escapeObjectName}: that method depends on the connection's quoting
      * strategy, and under {@code QUOTE_ALL_OBJECTS} — which the changelog writer's reference
@@ -315,16 +324,10 @@ public class TrinoDatabase extends H2Database {
      */
     private String qualify(String catalog, String schema, String name) {
         StringBuilder qualified = new StringBuilder();
-        if (isBlank(catalog)) {
-            catalog = getDefaultCatalogName();
-        }
-        if (!isBlank(catalog)) {
+        if (catalog != null) {
             qualified.append(identifier(catalog)).append('.');
         }
-        if (isBlank(schema)) {
-            schema = getDefaultSchemaName();
-        }
-        if (!isBlank(schema)) {
+        if (schema != null) {
             qualified.append(identifier(schema)).append('.');
         }
         return qualified.append(identifier(name)).toString();

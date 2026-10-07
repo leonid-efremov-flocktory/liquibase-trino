@@ -14,7 +14,7 @@ import liquibase.structure.core.Table;
  * <p>
  * Everything else is left to {@link TableSnapshotGenerator}: relations are still found through
  * JDBC metadata and their columns are still read column by column. What is added is the attribute
- * {@link TrinoDdlFetcher#DDL_ATTRIBUTE}, because the connector properties and the table comment
+ * {@link TrinoDatabase#DDL_ATTRIBUTE}, because the connector properties and the table comment
  * exist only in {@code SHOW CREATE TABLE} — {@code information_schema} reports neither, and the
  * column types it does report are lossy ({@code varchar} with no length comes back as
  * {@code character_maximum_length = 2147483647}).

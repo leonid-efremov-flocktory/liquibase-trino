@@ -2,11 +2,9 @@ package liquibase.ext.trino.snapshot;
 
 import liquibase.database.Database;
 import liquibase.database.jvm.JdbcConnection;
-import liquibase.diff.compare.DatabaseObjectComparatorFactory;
 import liquibase.exception.DatabaseException;
 import liquibase.ext.trino.database.TrinoDatabase;
 import liquibase.snapshot.DatabaseSnapshot;
-import liquibase.snapshot.InvalidExampleException;
 import liquibase.snapshot.SnapshotGenerator;
 import liquibase.snapshot.jvm.SchemaSnapshotGenerator;
 import liquibase.structure.DatabaseObject;
@@ -44,7 +42,7 @@ public class TrinoSchemaSnapshotGenerator extends SchemaSnapshotGenerator {
 
     @Override
     protected DatabaseObject snapshotObject(DatabaseObject example, DatabaseSnapshot snapshot)
-            throws DatabaseException, InvalidExampleException {
+            throws DatabaseException {
         Database database = snapshot.getDatabase();
 
         String catalogName = ((Schema) example).getCatalogName();
@@ -55,7 +53,6 @@ public class TrinoSchemaSnapshotGenerator extends SchemaSnapshotGenerator {
         if (schemaName == null) {
             schemaName = database.getDefaultSchemaName();
         }
-        Schema exampleSchema = new Schema(catalogName, schemaName);
 
         Schema match = null;
         try (ResultSet schemas = ((JdbcConnection) database.getConnection()).getMetaData().getSchemas()) {
@@ -67,14 +64,13 @@ public class TrinoSchemaSnapshotGenerator extends SchemaSnapshotGenerator {
                     continue;
                 }
 
-                Schema schema = new Schema(new Catalog(tableCat), tableSchem);
-                if (DatabaseObjectComparatorFactory.getInstance().isSameObject(
-                        schema, exampleSchema, snapshot.getSchemaComparisons(), database)) {
-                    if (match == null) {
-                        match = schema;
-                    } else {
-                        throw new InvalidExampleException("Found multiple catalog/schemas matching " + catalogName + "." + schemaName);
-                    }
+                // Trino stores unquoted identifiers in lower case and folds lookups to lower
+                // case, so equalsIgnoreCase is its exact matching semantics. With an explicit
+                // comparison on both catalog and schema, two rows cannot match, so the first
+                // hit is the answer — no ambiguity branch is possible or needed.
+                if (tableSchem != null && tableSchem.equalsIgnoreCase(schemaName)) {
+                    match = new Schema(new Catalog(tableCat), tableSchem);
+                    break;
                 }
             }
         } catch (SQLException e) {
