@@ -365,8 +365,13 @@ public class TrinoDatabase extends H2Database {
     /**
      * Reads a session variable such as {@code current_catalog}; null when the session has none.
      * <p>
-     * Trino returns an empty string rather than null when the session has no catalog or schema,
-     * so the empty case is normalized here. A failure is logged and swallowed because the caller,
+     * An unset session variable comes back as SQL NULL, and {@code trimToNull} covers the empty
+     * string alongside it. Note what the NULL case costs the caller: Trino reports no schema at
+     * all for a URL that names only a catalog, so {@link #getConnectionSchemaName()} returns null,
+     * {@link #getDefaultSchema()} then carries a null schema, and {@code snapshot} /
+     * {@code generate-changelog} find no schema to work with and return the catalog alone. That is
+     * why those commands need the schema named — see README, "Snapshot and generate-changelog".
+     * A failure is logged and swallowed because the caller,
      * {@code getConnectionSchemaName()}, cannot declare a checked exception: losing the fallback
      * only means the user has to pass the schema explicitly.
      */

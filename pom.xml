@@ -5,7 +5,7 @@
 
     <groupId>io.github.leonid-efremov-flocktory</groupId>
     <artifactId>liquibase-trino</artifactId>
-    <version>0.1.2</version>
+    <version>0.2.0</version>
     <packaging>jar</packaging>
 
     <name>Liquibase Extension: Trino support (H2-based shim)</name>

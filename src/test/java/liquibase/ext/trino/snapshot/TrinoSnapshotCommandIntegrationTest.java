@@ -92,9 +92,12 @@ class TrinoSnapshotCommandIntegrationTest {
         new CommandScope(SnapshotCommandStep.COMMAND_NAME[0])
                 .addArgumentValue("url", TrinoTestSupport.url())
                 .addArgumentValue("username", TrinoTestSupport.user())
-                // The command has no schema argument in 5.0.4 other than this one; without it the
-                // target catalog/schema is null and CatalogAndSchema.toString() turns the schema
-                // into the literal "DEFAULT", which Trino does not have. See Known limitations.
+                // The schema has to be named. With it unset, Trino reports no session schema for a
+                // catalog-only URL, so database.getDefaultSchema() carries a null schema, renders as
+                // "iceberg_catalog.DEFAULT", matches no real schema, and the snapshot comes back
+                // holding only the catalog — with no error. Putting the schema in the URL
+                // (jdbc:trino://host:8081/iceberg_catalog/<schema>) resolves the same way.
+                // See README, "Snapshot and generate-changelog".
                 .addArgumentValue(SnapshotCommandStep.SCHEMAS_ARG, TrinoTestSupport.FIXTURE_SCHEMA_NAME)
                 .addArgumentValue("snapshotFormat", "json")
                 .setOutput(out)
