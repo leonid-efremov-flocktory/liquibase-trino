@@ -40,4 +40,60 @@
         </rollback>
     </changeSet>
 
+<!--
+        The data path, which no DDL change touches: rows go in through <insert> and come back
+        out through <delete>. Both are here rather than in the sqlFile body so that the
+        structured change types get exercised, not just raw SQL.
+
+        Three schema details, all enforced by dbchangelog XSD validation or by how the data
+        changes build SQL, and worth writing down rather than rediscovering:
+
+          - a <delete> takes its filter as a nested <where> element, not as a where attribute;
+          - a string column takes a plain value attribute, where valueComputed would mean SQL;
+          - the table is named through catalogName/schemaName/tableName rather than one
+            dotted tableName. The data changes quote the table name whole and prefix the
+            connection's default schema, so a dotted tableName comes out as
+            liquibase_changelog."iceberg_catalog.dev_test_schema.sqlfile_table" — a name no
+            such table has.
+    -->
+    <changeSet id="xml-sqlfile-insert" author="Leonid-Efremov">
+        <comment>Rows added through the structured insert change</comment>
+        <insert catalogName="${catalog.default}"
+                schemaName="${schema.test_schema}"
+                tableName="sqlfile_table">
+            <column name="id" valueNumeric="20"/>
+            <column name="txt" value="из insert"/>
+        </insert>
+        <insert catalogName="${catalog.default}"
+                schemaName="${schema.test_schema}"
+                tableName="sqlfile_table">
+            <column name="id" valueNumeric="21"/>
+            <column name="txt" value="ещё из insert"/>
+        </insert>
+        <rollback>
+            <delete catalogName="${catalog.default}"
+                    schemaName="${schema.test_schema}"
+                    tableName="sqlfile_table">
+                <where>id IN (20, 21)</where>
+            </delete>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="xml-sqlfile-delete" author="Leonid-Efremov">
+        <comment>Rows removed through the structured delete change</comment>
+        <delete catalogName="${catalog.default}"
+                schemaName="${schema.test_schema}"
+                tableName="sqlfile_table">
+            <where>id = 11</where>
+        </delete>
+        <rollback>
+            <insert catalogName="${catalog.default}"
+                    schemaName="${schema.test_schema}"
+                    tableName="sqlfile_table">
+                <column name="id" valueNumeric="11"/>
+                <column name="txt" value="ещё из sqlFile"/>
+            </insert>
+        </rollback>
+    </changeSet>
+
 </databaseChangeLog>

@@ -52,57 +52,78 @@ class TrinoChangelogFormatIntegrationTest {
     }
 
     /**
-     * Each format must reach its own parser and apply the same objects from the same external
-     * body file.
+     * Each format must reach its own parser, apply its objects from the external body file, and
+     * record its changesets — and the XML variant additionally runs the structured
+     * {@code <insert>} / {@code <delete>} changes.
      * <p>
      * The parser is pinned because it is what makes the runs meaningfully different: the JSON
-     * parser extends the YAML one, so only its name differs — the files do not. The row text
-     * asserted below can only come from the body file, so that assertion also proves the file
-     * was read rather than skipped, which is the interesting part of
-     * {@code relativeToChangelogFile}: the body sits next to the changelog rather than at the
-     * root of the classpath.
+     * parser extends the YAML one, so only its name differs — the files do not.
      * <p>
-     * The cases share one tracking table, so the ids are filtered by this format's own prefix:
-     * what matters is that the format recorded its changesets in order, not what the other two
-     * recorded before it.
+     * The stand is reset before each case: the three fixtures build the same table in the same
+     * schema, so without a reset the second case would find the first one's rows still there and
+     * its own counts would be wrong.
      */
     @ParameterizedTest(name = "{0} is parsed by {2}")
-    @CsvSource({
-            "xml,  liquibase/ext/trino/sqlfile-probe.xml,  XMLChangeLogSAXParser",
-            "yaml, liquibase/ext/trino/sqlfile-probe.yaml, YamlChangeLogParser",
-            "json, liquibase/ext/trino/sqlfile-probe.json, JsonChangeLogParser",
+    // Semicolon-separated: the row texts and the id lists contain commas, which CSV would split.
+    @CsvSource(delimiter = ';', value = {
+            // sqlFile body inserts 10 and 11; <insert> adds 20 and 21; <delete> removes 11.
+            "xml;  liquibase/ext/trino/sqlfile-probe.xml;  XMLChangeLogSAXParser; 4; 3; из sqlFile, из insert, ещё из insert",
+            "yaml; liquibase/ext/trino/sqlfile-probe.yaml; YamlChangeLogParser; 2; 2; из sqlFile, ещё из sqlFile",
+            "json; liquibase/ext/trino/sqlfile-probe.json; JsonChangeLogParser; 2; 2; из sqlFile, ещё из sqlFile",
     })
-    void sqlFileChangelogAppliesItsObjects(String format, String changelog, String expectedParser)
-            throws Exception {
+    void sqlFileChangelogAppliesItsObjects(String format, String changelog, String expectedParser,
+                                           int expectedChangesets, int expectedRows,
+                                           String expectedRowTexts) throws Exception {
 
         assertEquals(expectedParser, parserFor(changelog));
 
+        resetProbeState();
         // A missing body file would fail here as a LiquibaseException before any SQL runs.
         TrinoTestSupport.update(changelog, db);
 
-        assertEquals("2", TrinoTestSupport.count(TrinoTestSupport.SQLFILE_TABLE),
-                "the sqlFile body must create the table and insert its rows");
-        assertEquals("2", TrinoTestSupport.count(TrinoTestSupport.SQLFILE_VIEW),
+        assertEquals("1", TrinoTestSupport.countObjects(
+                TrinoTestSupport.FIXTURE_SCHEMA_NAME, "sqlfile_table"),
+                "the sqlFile body must create the table");
+        assertEquals("1", TrinoTestSupport.countObjects(
+                TrinoTestSupport.FIXTURE_SCHEMA_NAME, "sqlfile_view"),
                 "the sqlFile body must create the view over that table");
-        assertEquals(List.of("из sqlFile", "ещё из sqlFile"),
+
+        assertEquals(List.of(expectedRowTexts.split(", ")),
                 TrinoTestSupport.queryFirstColumn("SELECT txt FROM "
                         + TrinoTestSupport.SQLFILE_TABLE + " ORDER BY id"),
-                "the rows must come from sqlfile-probe-body.sql, resolved relative to the changelog");
-        assertEquals(List.of(format + "-sqlfile-setup", format + "-sqlfile-table-and-rows"),
+                "the rows must come from sqlfile-probe-body.sql, resolved relative to the changelog,"
+                        + " plus whatever the structured changes added or removed");
+        assertEquals(expectedRows, Integer.parseInt(TrinoTestSupport.count(TrinoTestSupport.SQLFILE_TABLE)),
+                "the table must hold as many rows as the row list above");
+
+        // The XML fixture also has the data changes; the other two stop at the sqlFile body.
+        assertEquals(changelog.equals(TrinoTestSupport.CHANGELOG_SQLFILE_XML)
+                        ? List.of("xml-sqlfile-setup", "xml-sqlfile-table-and-rows",
+                        "xml-sqlfile-insert", "xml-sqlfile-delete")
+                        : List.of(format + "-sqlfile-setup", format + "-sqlfile-table-and-rows"),
                 recordedIds(format),
-                "each format must record its own two changesets in execution order");
+                "each format must record its own " + expectedChangesets
+                        + " changesets in execution order");
     }
 
     /**
-     * The rollback block of a {@code <sqlFile>} fixture, in the XML variant only: the three
-     * formats hold the same rollback SQL, so running it once is what proves the block is
-     * reachable, and the other two are covered by the assertion above.
+     * The rollback blocks of the XML fixture: the {@code <delete>} changeset's {@code <insert>}
+     * and the {@code <sqlFile>} changeset's {@code DROP}. Both are here because the structured
+     * data changes have their own, separate rollback path from raw SQL.
      */
     @Test
     void xmlSqlFileChangelogRollsBack() throws Exception {
+        resetProbeState();
         TrinoTestSupport.update(TrinoTestSupport.CHANGELOG_SQLFILE_XML, db);
 
         TrinoTestSupport.rollback(TrinoTestSupport.CHANGELOG_SQLFILE_XML, db, 1);
+
+        assertEquals(List.of("из sqlFile", "ещё из sqlFile", "из insert", "ещё из insert"),
+                TrinoTestSupport.queryFirstColumn("SELECT txt FROM "
+                        + TrinoTestSupport.SQLFILE_TABLE + " ORDER BY id"),
+                "rolling back the <delete> changeset must put its row back through its <insert>");
+
+        TrinoTestSupport.rollback(TrinoTestSupport.CHANGELOG_SQLFILE_XML, db, 2);
 
         assertEquals("0", TrinoTestSupport.countObjects(
                 TrinoTestSupport.FIXTURE_SCHEMA_NAME, "sqlfile_table"),
@@ -111,7 +132,23 @@ class TrinoChangelogFormatIntegrationTest {
                 TrinoTestSupport.FIXTURE_SCHEMA_NAME, "sqlfile_view"),
                 "rolling back the sqlFile changeset must drop the view it created");
         assertEquals(List.of("xml-sqlfile-setup"), recordedIds("xml"),
-                "only the rolled-back changeset's record must disappear");
+                "only the rolled-back changesets' records must disappear");
+    }
+
+    /**
+     * Returns the stand to a state where the next update applies every changeset from scratch:
+     * the probe objects and the tracking tables both go.
+     * <p>
+     * The tracking schema has to go too. Leaving it behind would mean Liquibase saw the changesets
+     * as already run and skipped them, while the objects they create are gone — so the case would
+     * run against an empty schema and fail on the first assertion instead of on the thing it means
+     * to test. Recreating it empty is safe: Liquibase writes DATABASECHANGELOG on the next update.
+     */
+    private static void resetProbeState() throws Exception {
+        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + TrinoTestSupport.SQLFILE_CHANGELOG_SCHEMA + " CASCADE");
+        TrinoTestSupport.execute("CREATE SCHEMA " + TrinoTestSupport.SQLFILE_CHANGELOG_SCHEMA);
+        TrinoTestSupport.execute("DROP VIEW IF EXISTS " + TrinoTestSupport.SQLFILE_VIEW);
+        TrinoTestSupport.execute("DROP TABLE IF EXISTS " + TrinoTestSupport.SQLFILE_TABLE);
     }
 
     /** The ids this format recorded, in execution order; the other two formats' are ignored. */

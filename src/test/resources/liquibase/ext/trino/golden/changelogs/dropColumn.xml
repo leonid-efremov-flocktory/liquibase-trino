@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Golden case: <dropColumn> emitting ALTER TABLE ... DROP COLUMN.
+
+    Run by TrinoGoldenSqlTest, which generates this changelog's SQL with the writer and compares
+    it with golden/expected-sql/dropColumn.sql verbatim, then really applies it, checks the result
+    through information_schema, rolls it back, and drops the schema. The case owns its schema, so
+    the cases share one stand and can run in any order.
+-->
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <property name="catalog.default" value="iceberg_catalog" dbms="trino"/>
+    <property name="schema.golden" value="golden_drop_column" dbms="trino"/>
+
+    <changeSet id="create-schema" author="Leonid-Efremov">
+        <sql>
+            CREATE SCHEMA IF NOT EXISTS ${catalog.default}.${schema.golden};
+        </sql>
+        <rollback>
+            <sql>
+                DROP SCHEMA IF EXISTS ${catalog.default}.${schema.golden} CASCADE;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="create-table" author="Leonid-Efremov">
+        <createTable catalogName="${catalog.default}"
+                     schemaName="${schema.golden}"
+                     tableName="t">
+            <column name="id" type="INT"/>
+            <column name="txt" type="VARCHAR(64)"/>
+        </createTable>
+        <rollback>
+            <sql>
+                DROP TABLE IF EXISTS ${catalog.default}.${schema.golden}.t;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="drop-column" author="Leonid-Efremov">
+        <dropColumn catalogName="${catalog.default}"
+                    schemaName="${schema.golden}"
+                    tableName="t"
+                    columnName="txt"/>
+        <rollback>
+            <addColumn catalogName="${catalog.default}"
+                       schemaName="${schema.golden}"
+                       tableName="t">
+                <column name="txt" type="VARCHAR(64)"/>
+            </addColumn>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

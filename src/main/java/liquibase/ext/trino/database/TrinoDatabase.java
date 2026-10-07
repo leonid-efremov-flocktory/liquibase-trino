@@ -1,16 +1,32 @@
 package liquibase.ext.trino.database;
 
 import liquibase.CatalogAndSchema;
+import liquibase.Scope;
 import liquibase.database.AbstractJdbcDatabase;
 import liquibase.database.DatabaseConnection;
+import liquibase.database.jvm.JdbcConnection;
 import liquibase.database.core.H2Database;
 import liquibase.exception.DatabaseException;
+import liquibase.executor.ExecutorService;
+import liquibase.statement.core.RawSqlStatement;
+import liquibase.structure.DatabaseObject;
+import liquibase.structure.core.ForeignKey;
+import liquibase.structure.core.Index;
+import liquibase.structure.core.PrimaryKey;
+import liquibase.structure.core.Schema;
+import liquibase.structure.core.Table;
+import liquibase.structure.core.UniqueConstraint;
+import liquibase.structure.core.View;
+import liquibase.util.StringUtil;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Minimal shim over {@link H2Database}. Liquibase selects a {@code Database}
@@ -23,6 +39,10 @@ public class TrinoDatabase extends H2Database {
 
     public static final String PRODUCT_NAME = "Trino";
     public static final int TRINO_PRIORITY_DATABASE = 510;
+
+    /** The two parts of {@code <catalog>.information_schema.views} that need escaping together. */
+    private static final String INFORMATION_SCHEMA = "information_schema";
+    private static final String VIEWS = "views";
 
     /**
      * Calls {@code AbstractJdbcDatabase.setConnection} directly, bypassing the
@@ -70,6 +90,60 @@ public class TrinoDatabase extends H2Database {
         } catch (NoSuchMethodException | IllegalAccessException e) {
             throw new ExceptionInInitializerError(e);
         }
+    }
+
+    /**
+     * Declares the constraint and index types this plugin will not read or generate.
+     * <p>
+     * The Trino JDBC driver cannot answer for them: {@code getIndexInfo} throws
+     * {@code SQLFeatureNotSupportedException("indexes not supported")}, while
+     * {@code getPrimaryKeys} and {@code getImportedKeys} always return an empty result set
+     * ({@code ... WHERE false}). Snapshot generators all guard on this flag before touching
+     * JDBC metadata, so returning false here is what keeps {@code snapshot} from dying on the
+     * first table and keeps {@code generate-changelog} from inventing constraints.
+     */
+    @Override
+    public boolean supports(Class<? extends DatabaseObject> object) {
+        if (Index.class.isAssignableFrom(object)
+                || PrimaryKey.class.isAssignableFrom(object)
+                || ForeignKey.class.isAssignableFrom(object)
+                || UniqueConstraint.class.isAssignableFrom(object)) {
+            return false;
+        }
+        return super.supports(object);
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The URL may carry no catalog, and {@code TrinoConnection.getCatalog()} then returns null
+     * — but Trino needs all three name parts. The session's own catalog is the only sensible
+     * fallback; Liquibase caches the result in {@code defaultCatalogName} itself.
+     */
+    @Override
+    protected String getConnectionCatalogName() throws DatabaseException {
+        String fromUrl = super.getConnectionCatalogName();
+        return isBlank(fromUrl) ? sessionSetting("current_catalog") : fromUrl;
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * {@link H2Database} answers this from a field initialized to the literal {@code "PUBLIC"},
+     * and since this class bypasses {@code H2Database.setConnection} (see
+     * {@link #setConnection}) nothing ever overwrites it. Calling {@code super} would therefore
+     * always return {@code "PUBLIC"}, which Trino has no such schema for: every snapshot looked
+     * for {@code iceberg_catalog.public}, found nothing, and {@code snapshot} and
+     * {@code generate-changelog} returned the catalog and the schema and nothing else.
+     * <p>
+     * {@code super} is unusable anyway: it would run {@code CALL current_schema}, which Trino
+     * has no such statement for. The session's own schema is read directly instead, and Trino
+     * reports an empty string rather than null when the session has none — see
+     * {@link #sessionSetting(String)}.
+     */
+    @Override
+    protected String getConnectionSchemaName() {
+        return sessionSetting("current_schema");
     }
 
     @Override
@@ -157,6 +231,161 @@ public class TrinoDatabase extends H2Database {
         // Trino runs DDL outside transactions; this also keeps Liquibase from
         // calling setAutoCommit(false).
         return false;
+    }
+
+    /**
+     * The view body — the {@code SELECT} and nothing else, as the base class contract requires.
+     * <p>
+     * Read from {@code information_schema.views} rather than through the base implementation,
+     * which resolves it through a SQL generator every dialect overrides differently, and unlike
+     * {@link H2Database#getViewDefinition} this makes no assumption about the text: that code
+     * calls {@code definition.startsWith("SELECT")} on a possibly null value.
+     */
+    @Override
+    public String getViewDefinition(CatalogAndSchema schema, String name) throws DatabaseException {
+        CatalogAndSchema target = schema.customize(this);
+        return queryForString("SELECT view_definition FROM "
+                + escapeObjectName(target.getCatalogName(), INFORMATION_SCHEMA, VIEWS, Schema.class)
+                + " WHERE table_schema = '" + escapeStringForDatabase(target.getSchemaName())
+                + "' AND table_name = '" + escapeStringForDatabase(name) + "'");
+    }
+
+    /**
+     * The complete {@code CREATE TABLE} statement as Trino prints it, with no interpretation.
+     * <p>
+     * This is what {@code snapshot} records and what {@code generate-changelog} replays, so it has
+     * to be verbatim: only {@code SHOW CREATE TABLE} carries the connector properties
+     * ({@code partitioning}, {@code location} on S3, {@code format}, {@code format_version}) and
+     * the table comment. {@code information_schema} exposes none of them.
+     *
+     * @return the DDL, or null when the table does not exist
+     */
+    public String getTableDefinition(CatalogAndSchema schema, String tableName) throws DatabaseException {
+        return showCreate("TABLE", schema, tableName);
+    }
+
+    /**
+     * The complete {@code CREATE VIEW} statement as Trino prints it, comment and security mode
+     * included.
+     * <p>
+     * Liquibase's own {@code <createView>} change can carry neither: {@code remarks} is emitted
+     * only for a hardcoded list of database classes in {@code CreateViewChange} that Trino is not
+     * part of, and {@code SECURITY DEFINER} has no field at all.
+     *
+     * @return the DDL, or null when the view does not exist
+     */
+    public String getViewDdl(CatalogAndSchema schema, String viewName) throws DatabaseException {
+        return showCreate("VIEW", schema, viewName);
+    }
+
+    /**
+     * Runs {@code SHOW CREATE <type>}, reporting a missing object as "not found" rather than as a
+     * failure.
+     * <p>
+     * Trino answers a missing table with an error ({@code Table ... does not exist}) instead of the
+     * empty result {@code DatabaseMetaData.getTables} would give, so a snapshot of a schema that
+     * has just been altered would otherwise abort on the first object that vanished in between.
+     */
+    private String showCreate(String type, CatalogAndSchema schema, String name) throws DatabaseException {
+        CatalogAndSchema target = schema.customize(this);
+        String qualified = qualify(target.getCatalogName(), target.getSchemaName(), name);
+        try {
+            return queryForString("SHOW CREATE " + type + " " + qualified);
+        } catch (DatabaseException e) {
+            if (isMissingObject(e)) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Builds the name for a {@code SHOW CREATE} statement, quoting only where Trino requires it.
+     * <p>
+     * Deliberately not {@code escapeObjectName}: that method depends on the connection's quoting
+     * strategy, and under {@code QUOTE_ALL_OBJECTS} — which the changelog writer's reference
+     * database uses — it quotes every part of the name. Trino echoes the spelling it was given, so
+     * the statement recorded here would come back as {@code "schema"."view"} instead of
+     * {@code schema.view}. Same object, different text, and the changelog would no longer match what
+     * an unqualified connection produces.
+     * <p>
+     * Trino folds unquoted identifiers to lower case, so a name that is already lower case and free
+     * of special characters is passed through as-is. Anything else is quoted, which preserves the
+     * spelling for names that genuinely need it.
+     */
+    private String qualify(String catalog, String schema, String name) {
+        StringBuilder qualified = new StringBuilder();
+        if (isBlank(catalog)) {
+            catalog = getDefaultCatalogName();
+        }
+        if (!isBlank(catalog)) {
+            qualified.append(identifier(catalog)).append('.');
+        }
+        if (isBlank(schema)) {
+            schema = getDefaultSchemaName();
+        }
+        if (!isBlank(schema)) {
+            qualified.append(identifier(schema)).append('.');
+        }
+        return qualified.append(identifier(name)).toString();
+    }
+
+    /** An identifier as Trino will echo it back: bare when safe to leave unquoted, else quoted. */
+    private static String identifier(String name) {
+        if (name == null) {
+            return null;
+        }
+        if (SAFE_IDENTIFIER.matcher(name).matches()) {
+            return name;
+        }
+        return '"' + name.replace("\"", "\"\"") + '"';
+    }
+
+    /** A name Trino stores unquoted: already lower case, no quoting or whitespace needed. */
+    private static final Pattern SAFE_IDENTIFIER = Pattern.compile("[a-z][a-z0-9_]*");
+
+    private static boolean isMissingObject(DatabaseException e) {
+        Throwable cause = e.getCause();
+        while (cause != null) {
+            String message = cause.getMessage();
+            if (message != null && message.contains("does not exist")) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
+    }
+
+    private String queryForString(String sql) throws DatabaseException {
+        return Scope.getCurrentScope().getSingleton(ExecutorService.class)
+                .getExecutor("jdbc", this)
+                .queryForObject(new RawSqlStatement(sql), String.class);
+    }
+
+    /**
+     * Reads a session variable such as {@code current_catalog}; null when the session has none.
+     * <p>
+     * Trino returns an empty string rather than null when the session has no catalog or schema,
+     * so the empty case is normalized here. A failure is logged and swallowed because the caller,
+     * {@code getConnectionSchemaName()}, cannot declare a checked exception: losing the fallback
+     * only means the user has to pass the schema explicitly.
+     */
+    private String sessionSetting(String name) {
+        if (!(getConnection() instanceof JdbcConnection)) {
+            return null;
+        }
+        try (java.sql.Statement statement =
+                     ((JdbcConnection) getConnection()).getUnderlyingConnection().createStatement();
+             ResultSet rs = statement.executeQuery("SELECT " + name)) {
+            return rs.next() ? StringUtil.trimToNull(rs.getString(1)) : null;
+        } catch (SQLException e) {
+            Scope.getCurrentScope().getLog(getClass()).warning("Could not read " + name + " from Trino", e);
+            return null;
+        }
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     @Override

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Golden case: <sql> passing a statement through.
+
+    Run by TrinoGoldenSqlTest, which generates this changelog's SQL with the writer and compares
+    it with golden/expected-sql/sql.sql verbatim, then really applies it, checks the result
+    through information_schema, rolls it back, and drops the schema. The case owns its schema, so
+    the cases share one stand and can run in any order.
+-->
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <property name="catalog.default" value="iceberg_catalog" dbms="trino"/>
+    <property name="schema.golden" value="golden_sql" dbms="trino"/>
+
+    <changeSet id="create-schema" author="Leonid-Efremov">
+        <sql>
+            CREATE SCHEMA IF NOT EXISTS ${catalog.default}.${schema.golden};
+        </sql>
+        <rollback>
+            <sql>
+                DROP SCHEMA IF EXISTS ${catalog.default}.${schema.golden} CASCADE;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="raw-sql" author="Leonid-Efremov">
+        <sql>
+            CREATE TABLE ${catalog.default}.${schema.golden}.t (id INT, txt VARCHAR(64));
+        </sql>
+        <rollback>
+            <sql>
+                DROP TABLE ${catalog.default}.${schema.golden}.t;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

@@ -22,7 +22,17 @@ public class TrinoSchemaSnapshotGenerator extends SchemaSnapshotGenerator {
     @Override
     public int getPriority(Class<? extends DatabaseObject> objectType, Database database) {
         if (database instanceof TrinoDatabase) {
-            return TrinoDatabase.TRINO_PRIORITY_DATABASE;
+            // Must stay PRIORITY_DEFAULT, i.e. the same slot SchemaSnapshotGenerator occupies.
+            //
+            // JdbcSnapshotGenerator.addTo works by recursion: a PRIORITY_ADDITIONAL generator
+            // (Table/View/Column, priority 50) calls chain.snapshot(...) to let the *rest* of the
+            // chain find the object, then attaches to the result. So the generator that produces
+            // the Schema has to come last in the chain, after the addTo generators.
+            // This class replaces SchemaSnapshotGenerator (priority 1), so returning anything
+            // above 50 puts it first, the recursion hits the exhausted iterator, chainResponse
+            // comes back null, and addTo is skipped entirely — which is why every snapshot found
+            // the schema but none of its tables or views.
+            return PRIORITY_DEFAULT;
         }
         return PRIORITY_NONE;
     }

@@ -1,1 +1,3 @@
 liquibase.ext.trino.snapshot.TrinoSchemaSnapshotGenerator
+liquibase.ext.trino.snapshot.TrinoTableSnapshotGenerator
+liquibase.ext.trino.snapshot.TrinoViewSnapshotGenerator

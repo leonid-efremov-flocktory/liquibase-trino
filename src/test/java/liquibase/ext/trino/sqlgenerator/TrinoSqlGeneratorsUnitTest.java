@@ -4,7 +4,10 @@ import liquibase.change.ColumnConfig;
 import liquibase.database.core.H2Database;
 import liquibase.ext.trino.database.TrinoDatabase;
 import liquibase.sql.Sql;
+import liquibase.statement.NotNullConstraint;
+import liquibase.statement.core.AddColumnStatement;
 import liquibase.statement.core.CreateDatabaseChangeLogLockTableStatement;
+import liquibase.statement.core.RenameColumnStatement;
 import liquibase.statement.core.SelectFromDatabaseChangeLogStatement;
 import org.junit.jupiter.api.Test;
 
@@ -13,8 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * SQL, which the plugin's two generators build, checked without a live Trino: both must apply
- * only to {@link TrinoDatabase}, and the SELECT one must not upper-case the column list.
+ * SQL, which the plugin's generators build, checked without a live Trino: each must apply only to
+ * {@link TrinoDatabase}, the SELECT one must not upper-case the column list, and the two that exist
+ * because Trino spells ALTER differently must emit Trino's spelling.
  * <p>
  * The generated SQL is compared as a string rather than run against a stand: these generators
  * only concatenate strings, so what matters here is exactly which tokens they emit and in what
@@ -108,6 +112,62 @@ class TrinoSqlGeneratorsUnitTest {
         assertTrue(sql.endsWith(" LIMIT 1"), "the LIMIT clause must survive: " + sql);
     }
 
+    // --- TrinoAddColumnGenerator ---
+
+    @Test
+    void addColumnAppliesOnlyToTrino() {
+        assertTrue(new TrinoAddColumnGenerator().supports(addColumn(), db));
+        assertFalse(new TrinoAddColumnGenerator().supports(addColumn(), new H2Database()),
+                "the add-column generator must not hijack other dialects");
+    }
+
+    @Test
+    void addColumnUsesTrinoPriority() {
+        assertEquals(TrinoDatabase.TRINO_PRIORITY_DATABASE, new TrinoAddColumnGenerator().getPriority());
+    }
+
+    @Test
+    void addColumnIncludesTheColumnKeyword() {
+        // Trino rejects a bare ADD: "mismatched input '<name>'. Expecting: '.', 'ADD'".
+        assertEquals("ALTER TABLE t ADD COLUMN txt VARCHAR(64)", addColumnSql());
+    }
+
+    @Test
+    void addColumnKeepsNotNullAndDefault() {
+        // The override only inserts the COLUMN keyword; everything else is still the base
+        // generator's, so the constraint and default clauses must survive it.
+        AddColumnStatement statement = new AddColumnStatement(
+                null, null, "t", "txt", "VARCHAR(64)", "x", new NotNullConstraint());
+
+        String sql = new TrinoAddColumnGenerator().generateSql(statement, db, null)[0].toSql();
+
+        assertTrue(sql.startsWith("ALTER TABLE t ADD COLUMN txt VARCHAR(64)"), sql);
+        assertTrue(sql.contains("NOT NULL"), "the NOT NULL clause must survive: " + sql);
+        assertTrue(sql.contains("DEFAULT 'x'"), "the DEFAULT clause must survive: " + sql);
+    }
+
+    // --- TrinoRenameColumnGenerator ---
+
+    @Test
+    void renameColumnAppliesOnlyToTrino() {
+        assertTrue(new TrinoRenameColumnGenerator().supports(renameColumn(), db));
+        assertFalse(new TrinoRenameColumnGenerator().supports(renameColumn(), new H2Database()),
+                "the rename-column generator must not hijack other dialects");
+    }
+
+    @Test
+    void renameColumnUsesTrinoPriority() {
+        assertEquals(TrinoDatabase.TRINO_PRIORITY_DATABASE, new TrinoRenameColumnGenerator().getPriority());
+    }
+
+    @Test
+    void renameColumnUsesTrinoSyntax() {
+        // Not the H2 form the base generator would pick, because TrinoDatabase extends H2Database:
+        // "ALTER COLUMN old RENAME TO new" is rejected with
+        // "mismatched input 'RENAME'. Expecting: '.', 'DROP', 'SET'".
+        assertEquals("ALTER TABLE t RENAME COLUMN txt TO body", renameColumnSql());
+    }
+
     private String lockTableSql() {
         Sql[] sql = new TrinoCreateDatabaseChangeLogLockTableGenerator()
                 .generateSql(new CreateDatabaseChangeLogLockTableStatement(), db, null);
@@ -117,5 +177,21 @@ class TrinoSqlGeneratorsUnitTest {
     private String selectSql(SelectFromDatabaseChangeLogStatement statement) {
         Sql[] sql = new TrinoSelectFromDatabaseChangeLogGenerator().generateSql(statement, db, null);
         return sql[0].toSql();
+    }
+
+    private String addColumnSql() {
+        return new TrinoAddColumnGenerator().generateSql(addColumn(), db, null)[0].toSql();
+    }
+
+    private String renameColumnSql() {
+        return new TrinoRenameColumnGenerator().generateSql(renameColumn(), db, null)[0].toSql();
+    }
+
+    private AddColumnStatement addColumn() {
+        return new AddColumnStatement(null, null, "t", "txt", "VARCHAR(64)", null);
+    }
+
+    private RenameColumnStatement renameColumn() {
+        return new RenameColumnStatement(null, null, "t", "txt", "body", null);
     }
 }

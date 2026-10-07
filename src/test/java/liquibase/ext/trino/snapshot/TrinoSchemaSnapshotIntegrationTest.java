@@ -35,22 +35,32 @@ class TrinoSchemaSnapshotIntegrationTest {
     private static final String SYSTEM_SCHEMA = "runtime";
     private static final String SHARED_SCHEMA_NAME = "information_schema";
 
+    /**
+     * A schema of this class's own. Schema lookup does not read anything out of a schema, so the
+     * class needs one to exist and nothing more — which is why it creates one instead of leaning on
+     * the shared fixture's {@code dev_test_schema} and the {@code applyIfNeeded()} that comes with
+     * it. Depending on another class's fixture made this one fail whenever it ran after a class
+     * that had rolled that fixture back.
+     */
+    private static final String OWN_SCHEMA = "schema_lookup_probe";
+
     private static Database db;
     private static String catalog;
 
     @BeforeAll
     static void setup() throws Exception {
-        TrinoTestSupport.applyIfNeeded();
         db = TrinoTestSupport.openDatabase();
         catalog = db.getDefaultCatalogName();
+        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + catalog + "." + OWN_SCHEMA + " CASCADE");
+        TrinoTestSupport.execute("CREATE SCHEMA " + catalog + "." + OWN_SCHEMA);
     }
 
     @Test
     void findsExistingSchemaInDefaultCatalog() throws Exception {
-        Schema found = snapshot(TrinoTestSupport.FIXTURE_SCHEMA_NAME);
+        Schema found = snapshot(OWN_SCHEMA);
 
-        assertEquals(TrinoTestSupport.FIXTURE_SCHEMA_NAME, found.getName(),
-                "the fixture schema must be found");
+        assertEquals(OWN_SCHEMA, found.getName(),
+                "the schema must be found");
         assertEquals(catalog, found.getCatalogName(),
                 "the found schema must carry the catalog it was looked up in");
     }
@@ -67,9 +77,9 @@ class TrinoSchemaSnapshotIntegrationTest {
      */
     @Test
     void lookupIsCaseInsensitive() throws Exception {
-        Schema found = snapshot(TrinoTestSupport.FIXTURE_SCHEMA_NAME.toUpperCase());
+        Schema found = snapshot(OWN_SCHEMA.toUpperCase());
 
-        assertEquals(TrinoTestSupport.FIXTURE_SCHEMA_NAME, found.getName(),
+        assertEquals(OWN_SCHEMA, found.getName(),
                 "an upper-case schema name must resolve to the lower-case stored name");
     }
 
