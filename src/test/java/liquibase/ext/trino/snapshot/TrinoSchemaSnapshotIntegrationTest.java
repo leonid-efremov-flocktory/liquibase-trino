@@ -6,7 +6,9 @@ import liquibase.snapshot.EmptyDatabaseSnapshot;
 import liquibase.snapshot.SnapshotControl;
 import liquibase.snapshot.SnapshotGeneratorFactory;
 import liquibase.structure.core.Schema;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
@@ -28,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * {@link TrinoMetadataSnapshotIntegrationTest} covers table lookup, which goes through a
  * different generator.
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoSchemaSnapshotIntegrationTest {
 
@@ -51,8 +54,12 @@ class TrinoSchemaSnapshotIntegrationTest {
     static void setup() throws Exception {
         db = TrinoTestSupport.openDatabase();
         catalog = db.getDefaultCatalogName();
-        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + catalog + "." + OWN_SCHEMA + " CASCADE");
-        TrinoTestSupport.execute("CREATE SCHEMA " + catalog + "." + OWN_SCHEMA);
+        TrinoTestSupport.resetSchemas(TrinoTestSupport.qualified(catalog, OWN_SCHEMA));
+    }
+
+    @AfterAll
+    static void dropProbeSchema() throws Exception {
+        TrinoTestSupport.dropSchemas(TrinoTestSupport.qualified(catalog, OWN_SCHEMA));
     }
 
     @Test
@@ -105,7 +112,7 @@ class TrinoSchemaSnapshotIntegrationTest {
     @Test
     void schemaNameSharedAcrossCatalogsResolvesToTheRequestedOne() throws Exception {
         Schema inDefault = directLookup(catalog, SHARED_SCHEMA_NAME);
-        assertEquals(catalog + "." + SHARED_SCHEMA_NAME,
+        assertEquals(TrinoTestSupport.qualified(catalog, SHARED_SCHEMA_NAME),
                 inDefault.getCatalogName() + "." + inDefault.getName(),
                 "the schema of the requested catalog must be found, not the same name elsewhere");
 

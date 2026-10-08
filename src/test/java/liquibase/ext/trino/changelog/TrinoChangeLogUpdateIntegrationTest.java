@@ -3,6 +3,7 @@ package liquibase.ext.trino.changelog;
 import liquibase.database.Database;
 import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.snapshot.SnapshotGeneratorFactory;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * scratch — it drops everything and applies the fixture in {@link #setup()}, so it does not
  * depend on what ran before it. Direct queries are used purely for verification.
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoChangeLogUpdateIntegrationTest {
 
@@ -39,18 +41,18 @@ class TrinoChangeLogUpdateIntegrationTest {
     @Test
     void updateAppliesAllChangesetsAndCreatesTrackingTables() throws Exception {
         assertTrue(SnapshotGeneratorFactory.getInstance().hasDatabaseChangeLogTable(db),
-                "Таблица DATABASECHANGELOG должна существовать после update");
+                "DATABASECHANGELOG must exist after the update");
         assertTrue(SnapshotGeneratorFactory.getInstance().hasDatabaseChangeLogLockTable(db),
-                "Таблица DATABASECHANGELOGLOCK должна существовать после update");
+                "DATABASECHANGELOGLOCK must exist after the update");
         assertTrue(TrinoTestSupport.trackingTablesExist(),
-                "Обе tracking-таблицы должны быть видны в information_schema");
+                "both tracking tables must be visible in information_schema");
     }
 
     @Test
     void updateRecordsEveryChangeset() throws Exception {
         assertEquals(TrinoTestSupport.APPLIED_CHANGESETS, TrinoTestSupport.appliedChangesetIds(),
-                "В DATABASECHANGELOG должны быть записи о всех трёх changeset'ах фикстуры "
-                        + "в порядке выполнения");
+                "DATABASECHANGELOG must hold a row for all three fixture changesets, "
+                        + "in execution order");
     }
 
     @Test
@@ -62,8 +64,8 @@ class TrinoChangeLogUpdateIntegrationTest {
                 "v1-test-table-and-view|2|EXECUTED|liquibase/ext/trino/v1-test-table-view.sql",
                 "v2-extend-test-table-and-view|3|EXECUTED|liquibase/ext/trino/v2-test-table-view-extend.sql"),
                 TrinoTestSupport.changelogRows(),
-                "Каждая запись DATABASECHANGELOG должна хранить свой orderexecuted, "
-                        + "EXECTYPE и имя файла-источника");
+                "every DATABASECHANGELOG row must carry its own orderexecuted, "
+                        + "EXECTYPE and source file name");
     }
 
     @Test
@@ -72,7 +74,7 @@ class TrinoChangeLogUpdateIntegrationTest {
         // next update, i.e. after the test run.
         assertEquals(List.of("false|"),
                 TrinoTestSupport.lockState(),
-                "DATABASECHANGELOGLOCK должна остаться с LOCKED = false и пустым LOCKEDBY");
+                "DATABASECHANGELOGLOCK must remain with LOCKED = false and an empty LOCKEDBY");
     }
 
     @Test
@@ -81,11 +83,11 @@ class TrinoChangeLogUpdateIntegrationTest {
         List<String> ids = TrinoTestSupport.queryFirstColumn(
                 "SELECT id FROM " + TrinoTestSupport.FIXTURE_TABLE + " ORDER BY id");
         assertEquals(List.of("1", "2", "3", "4", "5"), ids,
-                "v1 добавляет 3 строки, v2 ещё 2");
+                "v1 adds 3 rows, v2 adds 2 more");
 
         assertEquals("5", TrinoTestSupport.count(TrinoTestSupport.FIXTURE_TABLE));
         assertEquals("4", TrinoTestSupport.count(TrinoTestSupport.FIXTURE_VIEW),
-                "v2 сужает вью условием id > 1, поэтому вью отдаёт 4 строки из 5");
+                "v2 narrows the view to id > 1, so the view returns 4 of the 5 rows");
 
         assertEquals("первая строка",
                 TrinoTestSupport.queryFirstColumn(
@@ -93,7 +95,7 @@ class TrinoChangeLogUpdateIntegrationTest {
         assertEquals("2024-01-15 10:00:00.000000",
                 TrinoTestSupport.queryFirstColumn(
                         "SELECT ts FROM " + TrinoTestSupport.FIXTURE_TABLE + " WHERE id = 1").get(0),
-                "Колонка ts должна сохранить timestamp из INSERT");
+                "the ts column must keep the timestamp from the INSERT");
     }
 
     @Test
@@ -101,8 +103,8 @@ class TrinoChangeLogUpdateIntegrationTest {
         TrinoTestSupport.update(db);
 
         assertEquals("5", TrinoTestSupport.count(TrinoTestSupport.FIXTURE_TABLE),
-                "Повторный update не должен дублировать данные");
+                "a repeated update must not duplicate data");
         assertEquals(TrinoTestSupport.FIXTURE_CHANGESETS, TrinoTestSupport.changelogRows().size(),
-                "Повторный update не должен добавлять строки в DATABASECHANGELOG");
+                "a repeated update must not add rows to DATABASECHANGELOG");
     }
 }

@@ -1,14 +1,11 @@
 package liquibase.ext.trino.snapshot;
 
 import liquibase.command.CommandScope;
-import liquibase.command.core.SnapshotCommandStep;
 import liquibase.ext.trino.TrinoTestSupport;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
-
-import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -23,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * command through {@link CommandScope} rather than calling generators directly as the other
  * snapshot tests do.
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoSnapshotCommandIntegrationTest {
 
@@ -88,20 +86,6 @@ class TrinoSnapshotCommandIntegrationTest {
     }
 
     private static String snapshotJson() throws Exception {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        new CommandScope(SnapshotCommandStep.COMMAND_NAME[0])
-                .addArgumentValue("url", TrinoTestSupport.url())
-                .addArgumentValue("username", TrinoTestSupport.user())
-                // The schema has to be named. With it unset, Trino reports no session schema for a
-                // catalog-only URL, so database.getDefaultSchema() carries a null schema, renders as
-                // "iceberg_catalog.DEFAULT", matches no real schema, and the snapshot comes back
-                // holding only the catalog — with no error. Putting the schema in the URL
-                // (jdbc:trino://host:8081/iceberg_catalog/<schema>) resolves the same way.
-                // See README, "Snapshot and generate-changelog".
-                .addArgumentValue(SnapshotCommandStep.SCHEMAS_ARG, TrinoTestSupport.FIXTURE_SCHEMA_NAME)
-                .addArgumentValue("snapshotFormat", "json")
-                .setOutput(out)
-                .execute();
-        return out.toString(StandardCharsets.UTF_8);
+        return TrinoTestSupport.snapshotJson(TrinoTestSupport.FIXTURE_SCHEMA_NAME);
     }
 }

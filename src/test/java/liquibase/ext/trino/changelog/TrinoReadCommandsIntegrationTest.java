@@ -7,6 +7,7 @@ import liquibase.changelog.ChangeSetStatus;
 import liquibase.changelog.RanChangeSet;
 import liquibase.database.Database;
 import liquibase.ext.trino.TrinoTestSupport;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
@@ -38,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the exception: it writes a tag column, which {@link #tearDown()} clears.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoReadCommandsIntegrationTest {
 
@@ -78,7 +80,8 @@ class TrinoReadCommandsIntegrationTest {
         List<ChangeSetStatus> statuses =
                 liquibase.getChangeSetStatuses(TrinoTestSupport.CONTEXT, new LabelExpression());
 
-        assertEquals(TrinoTestSupport.APPLIED_CHANGESETS, idsOf(statuses),
+        assertEquals(TrinoTestSupport.APPLIED_CHANGESETS,
+                TrinoTestSupport.idsOf(statuses, status -> status.getChangeSet().getId()),
                 "status must see exactly the fixture's changesets");
         for (ChangeSetStatus status : statuses) {
             String id = status.getChangeSet().getId();
@@ -104,7 +107,8 @@ class TrinoReadCommandsIntegrationTest {
         ChangeLogHistoryService history = TrinoTestSupport.historyService(db);
         List<RanChangeSet> ran = history.getRanChangeSets();
 
-        assertEquals(TrinoTestSupport.APPLIED_CHANGESETS, ranIds(ran),
+        assertEquals(TrinoTestSupport.APPLIED_CHANGESETS,
+                TrinoTestSupport.idsOf(ran, RanChangeSet::getId),
                 "history must return the applied changesets in execution order");
 
         List<Integer> orders = new ArrayList<>();
@@ -133,43 +137,25 @@ class TrinoReadCommandsIntegrationTest {
         assertTrue(liquibase.tagExists(TAG), "tagExists must find the tag just written");
         // Read back through a tagged SELECT, not merely stored: this is the ByTag where-clause
         // path of the read generator.
-        assertEquals(List.of("v2-extend-test-table-and-view"), taggedChangesetIds(),
+        assertEquals(List.of("v2-extend-test-table-and-view"),
+                changesetIdsWhereTagIs("tag = '" + TAG + "'"),
                 "the tag must land on the last applied changeset and be found by the WHERE clause");
     }
 
     @Test
     @Order(2)
     void tagLeavesEarlierChangesetsUntagged() throws Exception {
-        assertEquals(List.of("common-schema-setup", "v1-test-table-and-view"), untaggedChangesetIds(),
+        // tag IS NULL, not tag = '': a tag column written as an empty string would satisfy the
+        // equality check and hide the difference between "no tag" and "empty tag".
+        assertEquals(List.of("common-schema-setup", "v1-test-table-and-view"),
+                changesetIdsWhereTagIs("tag IS NULL"),
                 "tag must only touch the changeset it was applied to, not rewrite the tag column");
     }
 
-    private static List<String> taggedChangesetIds() throws Exception {
+    /** Ids of the changesets the tag column holds the given value for, in execution order. */
+    private static List<String> changesetIdsWhereTagIs(String tagCondition) throws Exception {
         return TrinoTestSupport.queryFirstColumn("SELECT id FROM "
-                + TrinoTestSupport.CHANGELOG_SCHEMA + ".databasechangelog WHERE tag = '" + TAG + "'");
-    }
-
-    private static List<String> untaggedChangesetIds() throws Exception {
-        // tag IS NULL, not tag = '': a tag column written as an empty string would satisfy the
-        // equality check and hide the difference between "no tag" and "empty tag".
-        return TrinoTestSupport.queryFirstColumn("SELECT id FROM "
-                + TrinoTestSupport.CHANGELOG_SCHEMA + ".databasechangelog WHERE tag IS NULL"
+                + TrinoTestSupport.CHANGELOG_SCHEMA + ".databasechangelog WHERE " + tagCondition
                 + " ORDER BY orderexecuted");
-    }
-
-    private static List<String> idsOf(List<ChangeSetStatus> statuses) {
-        List<String> ids = new ArrayList<>();
-        for (ChangeSetStatus status : statuses) {
-            ids.add(status.getChangeSet().getId());
-        }
-        return ids;
-    }
-
-    private static List<String> ranIds(List<RanChangeSet> ran) {
-        List<String> ids = new ArrayList<>();
-        for (RanChangeSet changeSet : ran) {
-            ids.add(changeSet.getId());
-        }
-        return ids;
     }
 }

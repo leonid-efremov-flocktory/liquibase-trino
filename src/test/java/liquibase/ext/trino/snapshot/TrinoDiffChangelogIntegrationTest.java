@@ -1,15 +1,11 @@
 package liquibase.ext.trino.snapshot;
 
-import liquibase.command.CommandScope;
-import liquibase.command.core.DiffChangelogCommandStep;
 import liquibase.ext.trino.TrinoTestSupport;
-import liquibase.structure.core.Table;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
-
-import java.io.File;
-import java.nio.file.Files;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -36,34 +32,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * statement, and that is a design decision with real consequences — it would destroy data on every
  * {@code format} tweak. It is recorded in Known limitations in the README.
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoDiffChangelogIntegrationTest {
 
     private static final String REFERENCE_SCHEMA = "diff_changelog_reference";
     private static final String TARGET_SCHEMA = "diff_changelog_target";
-    private static final String SHARED_TABLE = "shared_table";
-    private static final String REFERENCE_ONLY = "reference_only_table";
-    private static final String TARGET_ONLY = "target_only_table";
+    private static final String SHARED_TABLE = TrinoTestSupport.DIFF_SHARED_TABLE;
+    private static final String REFERENCE_ONLY = TrinoTestSupport.DIFF_REFERENCE_ONLY;
+    private static final String TARGET_ONLY = TrinoTestSupport.DIFF_TARGET_ONLY;
+
+    private static final String COLUMNS = "(id integer, name varchar)";
 
     private static String catalog;
 
+    @AfterAll
+    static void dropProbeSchemas() throws Exception {
+        TrinoTestSupport.dropSchemas(TrinoTestSupport.qualified(catalog, REFERENCE_SCHEMA), TrinoTestSupport.qualified(catalog, TARGET_SCHEMA));
+    }
+
     @BeforeEach
     void setup() throws Exception {
-        try (liquibase.database.Database db = TrinoTestSupport.openDatabase()) {
-            catalog = db.getDefaultCatalogName();
-        }
-        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + catalog + "." + REFERENCE_SCHEMA + " CASCADE");
-        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + catalog + "." + TARGET_SCHEMA + " CASCADE");
-        TrinoTestSupport.execute("CREATE SCHEMA " + catalog + "." + REFERENCE_SCHEMA);
-        TrinoTestSupport.execute("CREATE SCHEMA " + catalog + "." + TARGET_SCHEMA);
-        TrinoTestSupport.execute("CREATE TABLE " + catalog + "." + REFERENCE_SCHEMA + "." + REFERENCE_ONLY
-                + " (id integer) WITH (format = 'PARQUET', partitioning = ARRAY['bucket(id, 4)'])");
-        TrinoTestSupport.execute("CREATE TABLE " + catalog + "." + REFERENCE_SCHEMA + "." + SHARED_TABLE
-                + " (id integer, name varchar)");
-        TrinoTestSupport.execute("CREATE TABLE " + catalog + "." + TARGET_SCHEMA + "." + TARGET_ONLY
-                + " (id integer)");
-        TrinoTestSupport.execute("CREATE TABLE " + catalog + "." + TARGET_SCHEMA + "." + SHARED_TABLE
-                + " (id integer, name varchar)");
+        catalog = TrinoTestSupport.catalog();
+
+        // reference_only_table is partitioned here, and only here: this test compares the
+        // emitted statement verbatim, so it needs a partitioning clause that could go missing.
+        TrinoTestSupport.createDiffFixture(
+                TrinoTestSupport.qualified(catalog, REFERENCE_SCHEMA), TrinoTestSupport.qualified(catalog, TARGET_SCHEMA),
+                COLUMNS, "(id integer) WITH (format = 'PARQUET', partitioning = ARRAY['bucket(id, 4)'])");
     }
 
     /**
@@ -74,7 +70,7 @@ class TrinoDiffChangelogIntegrationTest {
     void aMissingTableIsEmittedAsVerbatimDdl() throws Exception {
         String changelog = diffChangelog();
 
-        assertTrue(changelog.contains("CREATE TABLE " + catalog + "." + REFERENCE_SCHEMA + "." + REFERENCE_ONLY),
+        assertTrue(changelog.contains("CREATE TABLE " + TrinoTestSupport.qualified(catalog, REFERENCE_SCHEMA) + "." + REFERENCE_ONLY),
                 "the missing table must be created in the changelog:\\n" + changelog);
         assertFalse(changelog.contains("<createTable"),
                 "the structural form must not be used — it cannot express the connector properties:\\n"
@@ -123,8 +119,8 @@ class TrinoDiffChangelogIntegrationTest {
      */
     @Test
     void aChangedTableWithNoGeneratorProducesNoChange() throws Exception {
-        TrinoTestSupport.execute("DROP TABLE " + catalog + "." + TARGET_SCHEMA + "." + SHARED_TABLE);
-        TrinoTestSupport.execute("CREATE TABLE " + catalog + "." + TARGET_SCHEMA + "." + SHARED_TABLE
+        TrinoTestSupport.execute("DROP TABLE " + TrinoTestSupport.qualified(catalog, TARGET_SCHEMA) + "." + SHARED_TABLE);
+        TrinoTestSupport.execute("CREATE TABLE " + TrinoTestSupport.qualified(catalog, TARGET_SCHEMA) + "." + SHARED_TABLE
                 + " (id integer, name varchar) WITH (format = 'ORC')");
 
         String changelog = diffChangelog();
@@ -140,27 +136,10 @@ class TrinoDiffChangelogIntegrationTest {
      * Reads the reference table's DDL straight from the server, for the verbatim comparison.
      */
     private static String showCreate(String schema, String table) throws Exception {
-        try (liquibase.ext.trino.database.TrinoDatabase db =
-                     (liquibase.ext.trino.database.TrinoDatabase) TrinoTestSupport.openDatabase()) {
-            return db.getTableDefinition(new liquibase.CatalogAndSchema(catalog, schema), table);
-        }
+        return TrinoTestSupport.showCreate(catalog, schema, table);
     }
 
-    /**
-     * The {@code .trino.sql} suffix is required, not cosmetic: Liquibase picks the SQL serializer from
-     * the extension.
-     */
     private static String diffChangelog() throws Exception {
-        File file = new File("target", "diff-changelog-" + System.nanoTime() + ".trino.sql");
-        new CommandScope(DiffChangelogCommandStep.COMMAND_NAME[0])
-                .addArgumentValue("url", TrinoTestSupport.url())
-                .addArgumentValue("username", TrinoTestSupport.user())
-                .addArgumentValue("referenceUrl", TrinoTestSupport.url())
-                .addArgumentValue("referenceUsername", TrinoTestSupport.user())
-                .addArgumentValue("schemas", TARGET_SCHEMA)
-                .addArgumentValue("referenceSchemas", REFERENCE_SCHEMA)
-                .addArgumentValue(DiffChangelogCommandStep.CHANGELOG_FILE_ARG, file.getAbsolutePath())
-                .execute();
-        return Files.readString(file.toPath());
+        return TrinoTestSupport.diffChangelog(REFERENCE_SCHEMA, TARGET_SCHEMA);
     }
 }

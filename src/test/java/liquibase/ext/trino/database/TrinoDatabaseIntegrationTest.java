@@ -4,13 +4,13 @@ import liquibase.database.Database;
 import liquibase.database.OfflineConnection;
 import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.structure.core.Table;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link TrinoDatabaseUnitTest} and {@code TrinoMetadataSnapshotIntegrationTest}
  * (in the {@code snapshot} package).
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoDatabaseIntegrationTest {
 
@@ -29,11 +30,6 @@ class TrinoDatabaseIntegrationTest {
     @BeforeAll
     static void connect() throws Exception {
         db = TrinoTestSupport.openDatabase();
-    }
-
-    @Test
-    void trinoDatabaseIsSelectedByProductName() {
-        assertInstanceOf(TrinoDatabase.class, db);
     }
 
     @Test

@@ -1,22 +1,24 @@
 package liquibase.ext.trino.snapshot;
 
 import liquibase.command.CommandScope;
-import liquibase.command.core.GenerateChangelogCommandStep;
-import liquibase.command.core.SnapshotCommandStep;
 import liquibase.database.Database;
 import liquibase.database.jvm.JdbcConnection;
 import liquibase.ext.trino.TrinoTestSupport;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.sql.Connection;
+import java.util.stream.Stream;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,6 +55,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * that supersedes {@code url}, so the command uses the injected instance instead of building its own —
  * which is what makes the failure controllable at all.
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoSnapshotFailureIntegrationTest {
 
@@ -62,20 +65,19 @@ class TrinoSnapshotFailureIntegrationTest {
     private static final String GOOD_VIEW = "good_view";
     private static final String BROKEN_VIEW = "broken_view";
 
-    private static String catalog;
     private static String qualifiedSchema;
 
     @BeforeAll
     static void setup() throws Exception {
         TrinoTestSupport.applyIfNeeded();
 
+        String catalog;
         try (Database db = TrinoTestSupport.openDatabase()) {
             catalog = db.getDefaultCatalogName();
         }
-        qualifiedSchema = catalog + "." + SCHEMA;
+        qualifiedSchema = TrinoTestSupport.qualified(catalog, SCHEMA);
 
-        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + qualifiedSchema + " CASCADE");
-        TrinoTestSupport.execute("CREATE SCHEMA " + qualifiedSchema);
+        TrinoTestSupport.resetSchemas(qualifiedSchema);
         TrinoTestSupport.execute("CREATE TABLE " + qualifiedSchema + "." + GOOD_TABLE + " (id integer)");
         TrinoTestSupport.execute("CREATE TABLE " + qualifiedSchema + "." + BROKEN_TABLE + " (id integer)");
         TrinoTestSupport.execute("CREATE VIEW " + qualifiedSchema + "." + GOOD_VIEW
@@ -84,19 +86,13 @@ class TrinoSnapshotFailureIntegrationTest {
                 + " AS SELECT id FROM " + qualifiedSchema + "." + BROKEN_TABLE);
     }
 
-    // --- snapshot ---
-
-    /**
-     * The command has to come back with a document, and the document has to cover the objects that
-     * could be read. Before the guard this threw and produced nothing at all.
-     */
-    @Test
-    void snapshotSurvivesAnUnreadableTable() throws Exception {
-        String json = snapshotJson(FailingTrinoDatabase.on(BROKEN_TABLE));
-
-        assertTrue(json.contains("\"" + GOOD_TABLE + "\""),
-                "the readable table must still be snapshotted:\n" + json);
+    /** The probe schema is this class's own, so it leaves nothing behind for the next one to read. */
+    @AfterAll
+    static void dropProbeSchema() throws Exception {
+        TrinoTestSupport.dropSchemas(qualifiedSchema);
     }
+
+    // --- snapshot ---
 
 /**
      * A table whose verbatim DDL cannot be read is dropped, not kept with degraded metadata.
@@ -233,26 +229,41 @@ class TrinoSnapshotFailureIntegrationTest {
      * A skip nobody is told about is indistinguishable from a bug. The message has to name the
      * object: "something was skipped" leaves the user with a changelog that is quietly short and no
      * way to find out what is missing.
+     * <p>
+     * Both commands are covered, because both walk the same objects and either one could be the
+     * one that swallows the warning — a snapshot that warns correctly while the changelog generator
+     * stays silent is exactly the kind of half-working behaviour this asserts against. The two
+     * fail on different object types as well, so table and view are both exercised.
      */
-    @Test
-    void theSkippedObjectIsNamedInAWarning() throws Exception {
+    @ParameterizedTest(name = "the {0} command names the skipped {1} in a warning")
+    @MethodSource("skippedObjectsAndTheirCommands")
+    void theSkippedObjectIsNamedInAWarning(String commandName, String objectKind, String objectName,
+                                           Command command) throws Exception {
         WarningRecorder.Result<String> recorded = WarningRecorder.record(
-                () -> snapshotJson(FailingTrinoDatabase.on(BROKEN_VIEW)));
+                () -> command.run(FailingTrinoDatabase.on(objectName)));
 
-        assertTrue(recorded.mentions(BROKEN_VIEW),
-                "the warning must name the object that was skipped, got:\n"
+        assertTrue(recorded.mentions(objectName),
+                "the " + commandName + " warning must name the " + objectKind + " that was skipped, got:\n"
                         + String.join("\n", recorded.warnings()));
     }
 
-    /** The warning has to say which object, not merely that the statement could not be read. */
-    @Test
-    void theWarningDistinguishesTheDdlReadFromTheDroppedObject() throws Exception {
-        WarningRecorder.Result<String> recorded = WarningRecorder.record(
-                () -> generateChangelog(FailingTrinoDatabase.on(BROKEN_TABLE)));
+    /**
+     * A command that reads objects and may fail. Takes the database it reads through, because the
+     * object whose DDL it will fail on is chosen per case and the command under test is the only
+     * thing that differs between them.
+     */
+    @FunctionalInterface
+    private interface Command {
+        String run(FailingTrinoDatabase failing) throws Exception;
+    }
 
-        assertTrue(recorded.mentions(BROKEN_TABLE),
-                "a table whose DDL could not be read must still be reported, got:\n"
-                        + String.join("\n", recorded.warnings()));
+    /** The command to run, and the kind and name of the object whose DDL it will fail to read. */
+    private static Stream<Arguments> skippedObjectsAndTheirCommands() {
+        return Stream.of(
+                Arguments.of("snapshot", "view", BROKEN_VIEW,
+                        (Command) TrinoSnapshotFailureIntegrationTest::snapshotJson),
+                Arguments.of("generate-changelog", "table", BROKEN_TABLE,
+                        (Command) f -> generateChangelog(f, false)));
     }
 
     // --- Unchecked failures ---
@@ -297,16 +308,9 @@ class TrinoSnapshotFailureIntegrationTest {
     // --- Plumbing ---
 
     private static String snapshotJson(FailingTrinoDatabase failing) throws Exception {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (FailingTrinoDatabase db = open(failing)) {
-            new CommandScope(SnapshotCommandStep.COMMAND_NAME[0])
-                    .addArgumentValue("database", db)
-                    .addArgumentValue(SnapshotCommandStep.SCHEMAS_ARG, SCHEMA)
-                    .addArgumentValue("snapshotFormat", "json")
-                    .setOutput(out)
-                    .execute();
+            return TrinoTestSupport.snapshotJson(db, SCHEMA);
         }
-        return out.toString(StandardCharsets.UTF_8);
     }
 
     private static String generateChangelog(FailingTrinoDatabase failing) throws Exception {
@@ -327,15 +331,9 @@ class TrinoSnapshotFailureIntegrationTest {
     }
 
     private static File generateChangelogFile(FailingTrinoDatabase failing) throws Exception {
-        File file = new File("target", "snapshot-failure-" + System.nanoTime() + ".trino.sql");
         try (FailingTrinoDatabase db = open(failing)) {
-            new CommandScope(GenerateChangelogCommandStep.COMMAND_NAME[0])
-                    .addArgumentValue("database", db)
-                    .addArgumentValue(GenerateChangelogCommandStep.REFERENCE_SCHEMAS_ARG, SCHEMA)
-                    .addArgumentValue(GenerateChangelogCommandStep.CHANGELOG_FILE_ARG, file.getAbsolutePath())
-                    .execute();
+            return TrinoTestSupport.generateChangelogTo(db, SCHEMA, "snapshot-failure-");
         }
-        return file;
     }
 
     /** The failing dialect on a real connection. */
@@ -347,22 +345,8 @@ class TrinoSnapshotFailureIntegrationTest {
 
     /** The same commands with a plain, healthy connection. */
     private static String snapshotJsonHealthy() throws Exception {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (Database db = TrinoTestSupport.openDatabase()) {
-            new CommandScope(SnapshotCommandStep.COMMAND_NAME[0])
-                    .addArgumentValue("database", db)
-                    .addArgumentValue(SnapshotCommandStep.SCHEMAS_ARG, SCHEMA)
-                    .addArgumentValue("snapshotFormat", "json")
-                    .setOutput(out)
-                    .execute();
+            return TrinoTestSupport.snapshotJson(db, SCHEMA);
         }
-        return out.toString(StandardCharsets.UTF_8);
-    }
-
-    /** Kept so an unused-import change cannot quietly break the assertion above. */
-    @Test
-    void qualifiedSchemaIsCatalogPrefixed() {
-        assertEquals(catalog + "." + SCHEMA, qualifiedSchema,
-                "the fixture's qualified name is what the assertions above match against");
     }
 }

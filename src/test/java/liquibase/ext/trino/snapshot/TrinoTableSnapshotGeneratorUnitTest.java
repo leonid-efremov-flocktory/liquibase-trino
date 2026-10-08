@@ -10,6 +10,9 @@ import liquibase.snapshot.JdbcDatabaseSnapshot;
 import liquibase.snapshot.SnapshotControl;
 import liquibase.snapshot.SnapshotGenerator;
 import liquibase.structure.core.Table;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
@@ -37,12 +40,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code TrinoSnapshotFailureIntegrationTest}, where a view's body really does come from an overridable
  * dialect method.
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoTableSnapshotGeneratorUnitTest {
 
-    private static final String SCHEMA = "snapshot_failure_rt";
+    private static final String SCHEMA = "snapshot_generator_rt";
 
     private static final String TABLE = "good_table";
+
+    @BeforeAll
+    static void createFixture() throws Exception {
+        String qualified = TrinoTestSupport.catalog() + "." + SCHEMA;
+        TrinoTestSupport.resetSchemas(qualified);
+        TrinoTestSupport.execute("CREATE TABLE " + qualified + "." + TABLE + " (id integer)");
+    }
+
+    /**
+     * The schema is this class's own, which it used to borrow.
+     * <p>
+     * It pointed at {@link TrinoSnapshotFailureIntegrationTest}'s probe schema and relied on that
+     * class having left it behind. Adding teardown there turned that dependency into a test-order
+     * failure: the tests still passed together, but only because of where surefire happened to put
+     * the classes, and {@code aReadableTableIsStillSnapshotted} — the control for every other case
+     * here — came back null. A fixture has to belong to the class that reads it.
+     */
+    @AfterAll
+    static void dropFixture() throws Exception {
+        TrinoTestSupport.dropSchemas(TrinoTestSupport.catalog() + "." + SCHEMA);
+    }
 
     /**
      * The control. Without it, every test below would pass on a generator that returns null for

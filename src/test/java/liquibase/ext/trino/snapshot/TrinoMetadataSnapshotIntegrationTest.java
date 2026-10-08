@@ -7,6 +7,7 @@ import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.snapshot.SnapshotGeneratorFactory;
 import liquibase.structure.core.Schema;
 import liquibase.structure.core.Table;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * filter ({@code system.jdbc.tables}) is case-sensitive. {@code SnapshotGeneratorFactory.has(...)}
  * then failed to find an existing table and Liquibase retried the CREATE TABLE.
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoMetadataSnapshotIntegrationTest {
 
@@ -65,7 +67,7 @@ class TrinoMetadataSnapshotIntegrationTest {
     void hasExistingTableReturnsTrue() throws Exception {
         boolean has = SnapshotGeneratorFactory.getInstance().has(
                 new Table().setName(TABLE).setSchema(new Schema(catalog, SCHEMA)), db);
-        assertTrue(has, "Liquibase должен находить существующую таблицу " + SCHEMA + "." + TABLE);
+        assertTrue(has, "Liquibase must find the existing table " + SCHEMA + "." + TABLE);
     }
 
     @Test
@@ -81,11 +83,12 @@ class TrinoMetadataSnapshotIntegrationTest {
         // filter would reach getTables unchanged and find nothing — the bug itself.
         CatalogAndSchema catalogAndSchema = new CatalogAndSchema(catalog, SCHEMA.toUpperCase()).customize(db);
         String schemaPattern = ((AbstractJdbcDatabase) db).getJdbcSchemaName(catalogAndSchema);
-        assertEquals(SCHEMA, schemaPattern, "фильтр схемы для JDBC-метаданных должен быть в нижнем регистре");
+        assertEquals(SCHEMA, schemaPattern, "the schema filter for the JDBC metadata must be lower case");
 
         try (Connection c = TrinoTestSupport.openRaw();
              ResultSet rs = c.getMetaData().getTables(catalog, schemaPattern, TABLE, new String[]{"TABLE"})) {
-            assertTrue(rs.next(), "metadata.getTables должен вернуть таблицу по lower-case фильтру схемы");
+            assertTrue(rs.next(),
+                    "metadata.getTables must return the table for the lower-case schema filter");
         }
     }
 }

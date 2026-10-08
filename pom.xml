@@ -50,6 +50,8 @@
              и без явного указания сборка падает WARNING'ом о неполном effective model. -->
         <maven-resources-plugin.version>3.3.1</maven-resources-plugin.version>
         <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+        <!-- 0.8.8+ умеет читать class file 61 (JDK 17), на котором собран плагин. -->
+        <jacoco-maven-plugin.version>0.8.12</jacoco-maven-plugin.version>
     </properties>
 
     <!-- Единственный источник правды по зависимостям плагина.
@@ -126,6 +128,43 @@
                 <version>3.2.5</version>
             </plugin>
 
+            <!-- Покрытие нужно, чтобы «тесты можно сократить, покрытие не падает» было
+                 измеримо, а не на слово: без отчёта тихо исчезающая ветка в тонком
+                 override'е H2Database неотличима от намеренно непокрытой.
+                 prepare-agent подставляет agent в argLine, который surefire не задаёт,
+                 поэтому и не конфликтует с конфигурацией профиля `unit` ниже. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco-maven-plugin.version}</version>
+                <configuration>
+                    <!-- Отчёт строится по class-файлам из target/classes, и это указано явно,
+                         а не оставлено на умолчание: goal report по умолчанию берёт
+                         ${project.build.outputDirectory}, то есть main. Тестовые классы лежат
+                         в target/test-classes и в отчёт не попадают.
+                         Перечисление имён вида **/*Test* было бы перебором, который пришлось бы
+                         вести вручную: новый хелпер в тестах попал бы в статистику молча,
+                         и агрегат из 87% тихо сместился бы на код, который к плагину отношения
+                         не имеет. Один путь вместо списка имён такой ошибки не допускает. -->
+                    <classDumps>${project.build.outputDirectory}</classDumps>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>jacoco-prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>jacoco-report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
             <!-- Исходники и javadoc обязательны для публикации в Maven-репозиторий. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -170,9 +209,16 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
-                            <excludes>
-                                <exclude>**/*IntegrationTest.java</exclude>
-                            </excludes>
+                            <!--
+                              By tag, not by file name: every test needing a live Trino carries
+                              @Tag("integration"), including two whose names do not say so
+                              (TrinoGoldenSqlTest, TrinoTableSnapshotGeneratorUnitTest). Matching
+                              **/*IntegrationTest.java skipped neither, and a -Punit that quietly
+                              needs the stand is not the "no docker" profile it claims to be.
+                              @EnabledIf stays as the guard for the default build, where no stand
+                              is running: it makes such tests skip rather than fail.
+                            -->
+                            <excludedGroups>integration</excludedGroups>
                         </configuration>
                     </plugin>
                 </plugins>

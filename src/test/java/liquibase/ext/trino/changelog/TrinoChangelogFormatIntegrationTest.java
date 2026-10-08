@@ -5,6 +5,7 @@ import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.parser.ChangeLogParser;
 import liquibase.parser.ChangeLogParserFactory;
 import liquibase.resource.ClassLoaderResourceAccessor;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  * {@code liquibase_changelog} between cases, and the classes reading the main fixture would
  * then have to re-apply it — which is why they used to run the same update three times over.
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoChangelogFormatIntegrationTest {
 
@@ -145,8 +147,7 @@ class TrinoChangelogFormatIntegrationTest {
      * to test. Recreating it empty is safe: Liquibase writes DATABASECHANGELOG on the next update.
      */
     private static void resetProbeState() throws Exception {
-        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + TrinoTestSupport.SQLFILE_CHANGELOG_SCHEMA + " CASCADE");
-        TrinoTestSupport.execute("CREATE SCHEMA " + TrinoTestSupport.SQLFILE_CHANGELOG_SCHEMA);
+        TrinoTestSupport.resetSchemas(TrinoTestSupport.SQLFILE_CHANGELOG_SCHEMA);
         TrinoTestSupport.execute("DROP VIEW IF EXISTS " + TrinoTestSupport.SQLFILE_VIEW);
         TrinoTestSupport.execute("DROP TABLE IF EXISTS " + TrinoTestSupport.SQLFILE_TABLE);
     }

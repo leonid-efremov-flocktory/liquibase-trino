@@ -4,18 +4,17 @@ import liquibase.CatalogAndSchema;
 import liquibase.Contexts;
 import liquibase.LabelExpression;
 import liquibase.Liquibase;
-import liquibase.command.CommandScope;
-import liquibase.command.core.GenerateChangelogCommandStep;
 import liquibase.database.Database;
 import liquibase.ext.trino.TrinoTestSupport;
+import liquibase.ext.trino.TrinoTestSupport.Generated;
 import liquibase.resource.DirectoryResourceAccessor;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -31,36 +30,42 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the changelog body is compared character for character against {@code SHOW CREATE}, and then
  * dropped, re-applied from the generated file, and read back.
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoGenerateChangelogIntegrationTest {
 
-    private static final String CATALOG = "iceberg_catalog";
     private static final String SCHEMA = "generate_changelog_rt";
     private static final String TABLE = "rt_table";
     private static final String VIEW = "rt_view";
-    private static final String QUALIFIED = CATALOG + "." + SCHEMA;
 
     /** Tracking schema for the generated changelog, kept out of the generated schema itself. */
     private static final String CHANGELOG_SCHEMA = "generate_changelog_rt_meta";
 
+    private static String catalog;
+    private static String qualified;
     private static Database db;
+
+    /** Both schemas are recreated by {@link #setup()} on every run, but not left behind on failure. */
+    @AfterAll
+    static void dropProbeSchemas() throws Exception {
+        TrinoTestSupport.dropSchemas(qualified, TrinoTestSupport.qualified(catalog, CHANGELOG_SCHEMA));
+    }
 
     @BeforeAll
     static void setup() throws Exception {
         TrinoTestSupport.applyIfNeeded();
+        catalog = TrinoTestSupport.catalog();
+        qualified = TrinoTestSupport.qualified(catalog, SCHEMA);
         db = TrinoTestSupport.openChangelogDatabase();
 
-        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + QUALIFIED + " CASCADE");
-        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + CATALOG + "." + CHANGELOG_SCHEMA + " CASCADE");
-        TrinoTestSupport.execute("CREATE SCHEMA " + QUALIFIED);
-        TrinoTestSupport.execute("CREATE SCHEMA " + CATALOG + "." + CHANGELOG_SCHEMA);
-        TrinoTestSupport.execute("CREATE TABLE " + QUALIFIED + "." + TABLE + " ("
+        TrinoTestSupport.resetSchemas(qualified, TrinoTestSupport.qualified(catalog, CHANGELOG_SCHEMA));
+        TrinoTestSupport.execute("CREATE TABLE " + qualified + "." + TABLE + " ("
                 + "id integer, tags array(varchar), payload row(a integer, b varchar), ts timestamp(6)) "
                 + "WITH (format = 'PARQUET', partitioning = ARRAY['day(ts)'])");
-        TrinoTestSupport.execute("COMMENT ON TABLE " + QUALIFIED + "." + TABLE + " IS 'Таблица для round-trip'");
-        TrinoTestSupport.execute("COMMENT ON COLUMN " + QUALIFIED + "." + TABLE + ".id IS 'Ключ'");
-        TrinoTestSupport.execute("CREATE VIEW " + QUALIFIED + "." + VIEW
-                + " COMMENT 'Вью для round-trip' SECURITY DEFINER AS SELECT id FROM " + QUALIFIED + "." + TABLE);
+        TrinoTestSupport.execute("COMMENT ON TABLE " + qualified + "." + TABLE + " IS 'Таблица для round-trip'");
+        TrinoTestSupport.execute("COMMENT ON COLUMN " + qualified + "." + TABLE + ".id IS 'Ключ'");
+        TrinoTestSupport.execute("CREATE VIEW " + qualified + "." + VIEW
+                + " COMMENT 'Вью для round-trip' SECURITY DEFINER AS SELECT id FROM " + qualified + "." + TABLE);
     }
 
     /**
@@ -73,7 +78,7 @@ class TrinoGenerateChangelogIntegrationTest {
     void generatedChangelogContainsVerbatimDdl() throws Exception {
         String changelog = generate().text();
 
-        assertTrue(changelog.contains("CREATE TABLE " + QUALIFIED + "." + TABLE),
+        assertTrue(changelog.contains("CREATE TABLE " + qualified + "." + TABLE),
                 "the table DDL must be in the changelog:\n" + changelog);
         assertTrue(changelog.contains("CREATE VIEW"), "the view DDL must be in the changelog:\n" + changelog);
         assertTrue(changelog.contains("partitioning = ARRAY['day(ts)']"),
@@ -121,8 +126,8 @@ class TrinoGenerateChangelogIntegrationTest {
         String tableBefore = showCreateTable();
         String viewBefore = showCreateView();
 
-        TrinoTestSupport.execute("DROP VIEW " + QUALIFIED + "." + VIEW);
-        TrinoTestSupport.execute("DROP TABLE " + QUALIFIED + "." + TABLE);
+        TrinoTestSupport.execute("DROP VIEW " + qualified + "." + VIEW);
+        TrinoTestSupport.execute("DROP TABLE " + qualified + "." + TABLE);
         assertEquals("0", TrinoTestSupport.countObjects(SCHEMA, TABLE),
                 "the table must really be gone before the replay");
 
@@ -139,39 +144,19 @@ class TrinoGenerateChangelogIntegrationTest {
 
     /** Reads the table's DDL straight from the server. */
     private static String showCreateTable() throws Exception {
-        return trinoDatabase().getTableDefinition(new CatalogAndSchema(CATALOG, SCHEMA), TABLE);
+        return trinoDatabase().getTableDefinition(new CatalogAndSchema(catalog, SCHEMA), TABLE);
     }
 
     /** Reads the view's DDL straight from the server. */
     private static String showCreateView() throws Exception {
-        return trinoDatabase().getViewDdl(new CatalogAndSchema(CATALOG, SCHEMA), VIEW);
+        return trinoDatabase().getViewDdl(new CatalogAndSchema(catalog, SCHEMA), VIEW);
     }
 
     private static liquibase.ext.trino.database.TrinoDatabase trinoDatabase() {
         return (liquibase.ext.trino.database.TrinoDatabase) db;
     }
 
-    /**
-     * Runs the command into a file under {@code target/}. Not {@code java.io.tmpdir}: the test
-     * JVM runs inside a container, and the file has to be readable by the Liquibase run that
-     * follows in the same JVM.
-     * <p>
-     * The {@code .trino.sql} suffix is required, not cosmetic: Liquibase picks the SQL serializer
-     * from the extension and refuses a bare {@code .sql} name because it cannot tell which
-     * dialect's SQL formatting to apply.
-     */
     private static Generated generate() throws Exception {
-        File file = new File("target", "generate-changelog-" + System.nanoTime() + ".trino.sql");
-        new CommandScope(GenerateChangelogCommandStep.COMMAND_NAME[0])
-                .addArgumentValue("url", TrinoTestSupport.url())
-                .addArgumentValue("username", TrinoTestSupport.user())
-                .addArgumentValue(GenerateChangelogCommandStep.REFERENCE_SCHEMAS_ARG, SCHEMA)
-                .addArgumentValue(GenerateChangelogCommandStep.CHANGELOG_FILE_ARG, file.getAbsolutePath())
-                .execute();
-        return new Generated(file, Files.readString(file.toPath(), StandardCharsets.UTF_8));
-    }
-
-    /** A generated changelog: where it landed and what is in it. */
-    private record Generated(File file, String text) {
+        return TrinoTestSupport.generateChangelog(SCHEMA, "generate-changelog-");
     }
 }

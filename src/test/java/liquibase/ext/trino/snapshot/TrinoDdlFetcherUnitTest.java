@@ -5,9 +5,15 @@ import liquibase.database.core.H2Database;
 import liquibase.exception.DatabaseException;
 import liquibase.exception.UnexpectedLiquibaseException;
 import liquibase.ext.trino.database.TrinoDatabase;
+import liquibase.structure.DatabaseObject;
 import liquibase.structure.core.Table;
 import liquibase.structure.core.View;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -32,24 +38,21 @@ class TrinoDdlFetcherUnitTest {
     // --- A failure while reading the statement ---
 
     /**
-     * The ordinary case: the query itself failed.
+     * The ordinary case, over both object types: the query itself failed.
      *
      * <p>{@code false} means the caller must leave the object out of the snapshot. That is the whole
      * point of the method returning a verdict rather than a statement: a null would be
      * indistinguishable from an object that simply has no statement, and the caller would then keep
      * the object and let core reconstruct a {@code CREATE TABLE} from partial metadata.
+     *
+     * <p>One method over both types rather than one each: there is no view-specific behaviour here to
+     * drift, and a second copy of this test could only ever start disagreeing with the first.
      */
-    @Test
-    void tableDdlFailureSaysTheObjectCannotBeKept() {
-        assertFalse(TrinoDdlFetcher.attachVerbatimDdl(table(), new FailingTrinoDatabase("table")),
-                "a table whose statement cannot be read must not be kept without it");
-    }
-
-    /** The same rule, and it is literally the same method: no view-specific behaviour to drift. */
-    @Test
-    void viewDdlFailureSaysTheObjectCannotBeKept() {
-        assertFalse(TrinoDdlFetcher.attachVerbatimDdl(view(), new FailingTrinoDatabase("view")),
-                "a view is treated exactly like a table here");
+    @ParameterizedTest(name = "a {0} whose statement cannot be read is dropped")
+    @MethodSource("objectsWhoseStatementCannotBeRead")
+    void aFailedDdlReadSaysTheObjectCannotBeKept(String objectType, DatabaseObject object) {
+        assertFalse(TrinoDdlFetcher.attachVerbatimDdl(object, RejectingTrinoDatabase.checked()),
+                "an object whose statement cannot be read must not be kept without it");
     }
 
     /**
@@ -61,7 +64,7 @@ class TrinoDdlFetcherUnitTest {
      */
     @Test
     void runtimeFailureSaysTheObjectCannotBeKept() {
-        assertFalse(TrinoDdlFetcher.attachVerbatimDdl(table(), new FailingTrinoDatabase("runtime")),
+        assertFalse(TrinoDdlFetcher.attachVerbatimDdl(table(), RejectingTrinoDatabase.unchecked()),
                 "an unchecked failure must be handled like a checked one; the catch is Exception, "
                         + "not DatabaseException");
     }
@@ -169,6 +172,11 @@ class TrinoDdlFetcherUnitTest {
 
     // --- Fixtures ---
 
+    /** Both object types, named for the test report: the rule is the same for either. */
+    private static Stream<Arguments> objectsWhoseStatementCannotBeRead() {
+        return Stream.of(Arguments.of("table", table()), Arguments.of("view", view()));
+    }
+
     private static Table table() {
         return new Table(WHERE.getCatalogName(), WHERE.getSchemaName(), "broken");
     }
@@ -182,56 +190,6 @@ class TrinoDdlFetcherUnitTest {
 
     private static View view() {
         return new View(WHERE.getCatalogName(), WHERE.getSchemaName(), "broken");
-    }
-
-    /** Answers a fixed statement, or none when it is null. */
-    private static class WorkingTrinoDatabase extends TrinoDatabase {
-        String ddl = "CREATE TABLE iceberg_catalog.dev_test_schema.broken (id integer);";
-
-        @Override
-        public String getTableDefinition(CatalogAndSchema schema, String tableName) throws DatabaseException {
-            return ddl;
-        }
-
-        @Override
-        public String getViewDdl(CatalogAndSchema schema, String viewName) throws DatabaseException {
-            return ddl;
-        }
-    }
-
-    /**
-     * Fails the way a real read fails, in each of the shapes a real read can fail in.
-     *
-     * @param failure {@code "table"} or {@code "view"} to fail {@code SHOW CREATE} with a
-     *                {@link DatabaseException}, {@code "runtime"} to fail it with an
-     *                {@link UnexpectedLiquibaseException}
-     */
-    private static class FailingTrinoDatabase extends WorkingTrinoDatabase {
-
-        private final String failure;
-
-        private FailingTrinoDatabase(String failure) {
-            this.failure = failure;
-        }
-
-        @Override
-        public String getTableDefinition(CatalogAndSchema schema, String tableName) throws DatabaseException {
-            return fail();
-        }
-
-        @Override
-        public String getViewDdl(CatalogAndSchema schema, String viewName) throws DatabaseException {
-            return fail();
-        }
-
-        private String fail() throws DatabaseException {
-            if ("runtime".equals(failure)) {
-                // What ExecutorService.getExecutor throws when it has been shut down, and what the
-                // JDBC type conversion throws on a type it cannot map.
-                throw new UnexpectedLiquibaseException("executor is shut down");
-            }
-            throw new DatabaseException("SHOW CREATE failed");
-        }
     }
 
     /**

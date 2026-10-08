@@ -4,6 +4,7 @@ import liquibase.Liquibase;
 import liquibase.database.Database;
 import liquibase.ext.trino.TrinoTestSupport;
 import liquibase.resource.ClassLoaderResourceAccessor;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -25,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * can be rolled back exactly once.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoRollbackIntegrationTest {
 
@@ -43,8 +45,8 @@ class TrinoRollbackIntegrationTest {
      * — otherwise a failing intermediate assertion would leave the stand in a state the
      * next test does not expect.
      * <p>
-     * The class leaves the fixture rolled back and does not restore it: the next class that
-     * needs the applied state gets it from {@link TrinoTestSupport#applyIfNeeded()}, and
+     * The class leaves the fixture fully rolled back and does not restore it: the next class
+     * that needs the applied state gets it from {@link TrinoTestSupport#applyIfNeeded()}, and
      * re-applying it here would apply the same changesets twice per run.
      */
 
@@ -60,13 +62,13 @@ class TrinoRollbackIntegrationTest {
 
         String sql = output.toString();
         assertTrue(sql.contains("Rollback 2 Change(s) Script"),
-                "Вывод rollback-sql должен содержать заголовок: " + sql);
+                "the rollback-sql output must contain the header: " + sql);
         assertTrue(sql.contains("DROP VIEW IF EXISTS " + TrinoTestSupport.FIXTURE_VIEW),
-                "Скрипт отката должен содержать удаление test_view: " + sql);
+                "the rollback script must contain the drop of test_view: " + sql);
         assertTrue(sql.contains("DROP TABLE IF EXISTS " + TrinoTestSupport.FIXTURE_TABLE),
-                "Скрипт отката должен содержать удаление test_table: " + sql);
+                "the rollback script must contain the drop of test_table: " + sql);
         assertTrue(sql.contains("DELETE FROM " + TrinoTestSupport.FIXTURE_TABLE),
-                "Скрипт отката должен содержать удаление строк, добавленных в v2: " + sql);
+                "the rollback script must contain the delete of the rows v2 added: " + sql);
 
         // The writer path executes nothing: the objects are still in place.
         assertEquals("5", TrinoTestSupport.count(TrinoTestSupport.FIXTURE_TABLE));
@@ -79,13 +81,14 @@ class TrinoRollbackIntegrationTest {
         TrinoTestSupport.rollback(db, 1);
 
         assertEquals("3", TrinoTestSupport.count(TrinoTestSupport.FIXTURE_TABLE),
-                "Откат v2 должен удалить добавленные им строки 4 и 5");
+                "rolling back v2 must remove the rows 4 and 5 it added");
         assertEquals("3", TrinoTestSupport.count(TrinoTestSupport.FIXTURE_VIEW),
-                "Откат v2 возвращает вью к выборке без условия id > 1, поэтому она отдаёт все строки таблицы");
+                "rolling back v2 puts the view back to the selection without id > 1, "
+                        + "so it returns every row of the table");
 
         assertEquals(List.of("common-schema-setup", "v1-test-table-and-view"),
                 TrinoTestSupport.appliedChangesetIds(),
-                "Из DATABASECHANGELOG должна исчезнуть запись только об откатанном changeset'е");
+                "only the rolled back changeset must disappear from DATABASECHANGELOG");
 
         assertLockReleased();
     }
@@ -96,14 +99,42 @@ class TrinoRollbackIntegrationTest {
         TrinoTestSupport.rollback(db, 1);
 
         assertEquals("0", TrinoTestSupport.countFixtureObjects(TrinoTestSupport.VIEW_NAME),
-                "Откат v1 должен удалить вью test_view");
+                "rolling back v1 must drop test_view");
         assertEquals("0", TrinoTestSupport.countFixtureObjects(TrinoTestSupport.TABLE_NAME),
-                "Откат v1 должен удалить таблицу test_table");
+                "rolling back v1 must drop test_table");
 
         assertEquals(List.of("common-schema-setup"),
                 TrinoTestSupport.appliedChangesetIds(),
-                "Откат v1 должен убрать из DATABASECHANGELOG обе записи об объектах фикстуры, "
-                        + "оставив только no-op changeset создания схемы");
+                "rolling back v1 must clear both fixture object rows from DATABASECHANGELOG, "
+                        + "leaving only the no-op changeset that created the schema");
+
+        assertLockReleased();
+    }
+
+    /**
+     * The fixture's first changeset carries an empty {@code <rollback/>}: the schemas it created
+     * are deliberately not dropped, so rolling it back has nothing to do.
+     * <p>
+     * That makes this the only place the empty block is exercised against a live stand. It used
+     * to be asserted indirectly by a stand-less unit test that only checked the parse result
+     * ({@code assertInstanceOf(EmptyChange.class, …)}); asserting it here is stronger, because
+     * it also pins the observable consequence — the changeset disappears from
+     * {@code DATABASECHANGELOG} while its schemas survive, which is what "no-op" has to mean.
+     */
+    @Test
+    @Order(4)
+    void rollbackOfAnEmptyBlockUndoesNothingButForgetsTheChangeset() throws Exception {
+        TrinoTestSupport.rollback(db, 1);
+
+        assertEquals(List.of(), TrinoTestSupport.appliedChangesetIds(),
+                "rolling back the empty <rollback/> must remove the changeset row too");
+
+        assertEquals(List.of(TrinoTestSupport.FIXTURE_SCHEMA_NAME),
+                TrinoTestSupport.queryFirstColumn(
+                        "SELECT schema_name FROM " + TrinoTestSupport.catalog()
+                                + ".information_schema.schemata WHERE schema_name = '"
+                                + TrinoTestSupport.FIXTURE_SCHEMA_NAME + "'"),
+                "the schemas the rolled back changeset created must have survived");
 
         assertLockReleased();
     }
@@ -111,6 +142,7 @@ class TrinoRollbackIntegrationTest {
     /** Rollback takes the lock too: a stuck one would only show up on the next update. */
     private static void assertLockReleased() throws Exception {
         assertEquals(List.of("false|"), TrinoTestSupport.lockState(),
-                "DATABASECHANGELOGLOCK должна остаться с LOCKED = false и пустым LOCKEDBY после rollback");
+                "DATABASECHANGELOGLOCK must remain with LOCKED = false and an empty LOCKEDBY "
+                        + "after the rollback");
     }
 }

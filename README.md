@@ -25,7 +25,7 @@ PostgreSQL is the nearest dialect, but it cannot be used: Liquibase runs
 | Command | Supported | Notes |
 | --- | --- | --- |
 | `update` / `migrate` | yes | Applies XML, YAML and JSON changelogs, `<sql>`, `<sqlFile>`, and the DDL and data change types pinned by the golden tests. |
-| `rollback` / `rollback-sql` | yes | Rollback blocks in changelogs work; `TrinoChangelogRollbackUnitTest` covers parsing, the integration tests cover execution. |
+| `rollback` / `rollback-sql` | yes | Rollback blocks in changelogs work; `TrinoRollbackIntegrationTest` parses the fixture and executes the generated SQL on the stand. |
 | `generate-changelog` | yes | Emits verbatim DDL as raw SQL, not as `<createTable>` — see [below](#snapshot-and-generate-changelog) for the schema argument and the required `.trino.sql` output name. |
 | `status`, `history`, `tag`, `tagExists` | yes | Go through `TrinoSelectFromDatabaseChangeLogGenerator`. |
 | `update-sql` | yes | Used by the golden tests. |
@@ -114,11 +114,18 @@ the script uses it, otherwise it runs the build in a `maven:3.9-eclipse-temurin-
 (Trino is reachable there via `host.docker.internal`). The Trino URL and user can be
 overridden with `TRINO_TEST_URL` / `TRINO_TEST_USER`.
 
-**128 tests in total: 81 need the stand, 47 run without it.** The 47 take well under a second:
+**124 tests in total: 78 need the stand, 46 run without it.** The 46 take well under a second:
 
 ```bash
-mvn test -Dtest='TrinoDatabaseUnitTest,TrinoDdlFetcherUnitTest,TrinoSqlGeneratorsUnitTest,TrinoChangelogRollbackUnitTest'
+mvn test -Punit
 ```
+
+The split is by tag, not by file name: every test needing the stand carries
+`@Tag("integration")`, and `-Punit` excludes that tag. Name-based matching
+(`**/*IntegrationTest.java`) missed two classes whose names do not advertise the dependency —
+`TrinoGoldenSqlTest` and `TrinoTableSnapshotGeneratorUnitTest` — so `-Punit` quietly needed
+docker. `@EnabledIf` still guards the default build, where no stand is running: such tests skip
+rather than fail.
 
 All test classes share a single fixture, `src/test/resources/liquibase/ext/trino/test-changelog.xml`.
 

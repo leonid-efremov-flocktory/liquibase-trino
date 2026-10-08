@@ -4,12 +4,19 @@ import liquibase.change.ColumnConfig;
 import liquibase.database.core.H2Database;
 import liquibase.ext.trino.database.TrinoDatabase;
 import liquibase.sql.Sql;
+import liquibase.sqlgenerator.SqlGenerator;
 import liquibase.statement.NotNullConstraint;
 import liquibase.statement.core.AddColumnStatement;
 import liquibase.statement.core.CreateDatabaseChangeLogLockTableStatement;
 import liquibase.statement.core.RenameColumnStatement;
 import liquibase.statement.core.SelectFromDatabaseChangeLogStatement;
+import liquibase.statement.SqlStatement;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -29,22 +36,50 @@ class TrinoSqlGeneratorsUnitTest {
 
     private final TrinoDatabase db = new TrinoDatabase();
 
+    // --- Dialect selection, common to all four generators ---
+
+    /**
+     * Each generator claims Trino and nothing else.
+     * <p>
+     * One parameterized test over all four rather than a pair per generator: the property is the
+     * same one each time, and four copies of it could only start disagreeing — one generator
+     * quietly losing its {@code H2Database} rejection would leave the other three asserting.
+     */
+    @ParameterizedTest(name = "the {0} generator applies to Trino")
+    @MethodSource("generatorsWithTheirStatement")
+    void appliesOnlyToTrino(String name, SqlGenerator generator, SqlStatement statement) {
+        assertTrue(generator.supports(statement, db),
+                "the " + name + " generator must recognise Trino");
+        assertFalse(generator.supports(statement, new H2Database()),
+                "the " + name + " generator must not hijack other dialects");
+    }
+
+    /**
+     * The same four, checked against the priority Liquibase resolves dialects by. All four return
+     * the same constant, which is the point: a generator that forgot to override it would fall back
+     * to its base class's default and lose every Trino connection.
+     */
+    @ParameterizedTest(name = "the {0} generator uses the Trino priority")
+    @MethodSource("generatorsWithTheirStatement")
+    void usesTrinoPriority(String name, SqlGenerator generator, SqlStatement statement) {
+        assertEquals(TrinoDatabase.TRINO_PRIORITY_DATABASE, generator.getPriority(),
+                "the " + name + " generator must resolve Trino ahead of the dialects it extends");
+    }
+
+    /** Each generator, the name to report it by, and a statement of the kind it handles. */
+    private static Stream<Arguments> generatorsWithTheirStatement() {
+        return Stream.of(
+                Arguments.of("lock table", new TrinoCreateDatabaseChangeLogLockTableGenerator(),
+                        new CreateDatabaseChangeLogLockTableStatement()),
+                Arguments.of("SELECT", new TrinoSelectFromDatabaseChangeLogGenerator(),
+                        new SelectFromDatabaseChangeLogStatement("ID")),
+                Arguments.of("add column", new TrinoAddColumnGenerator(),
+                        new AddColumnStatement(null, null, "t", "txt", "VARCHAR(64)", null)),
+                Arguments.of("rename column", new TrinoRenameColumnGenerator(),
+                        new RenameColumnStatement(null, null, "t", "txt", "body", null)));
+    }
+
     // --- TrinoCreateDatabaseChangeLogLockTableGenerator ---
-
-    @Test
-    void lockTableAppliesOnlyToTrino() {
-        assertTrue(new TrinoCreateDatabaseChangeLogLockTableGenerator()
-                .supports(new CreateDatabaseChangeLogLockTableStatement(), db));
-        assertFalse(new TrinoCreateDatabaseChangeLogLockTableGenerator()
-                .supports(new CreateDatabaseChangeLogLockTableStatement(), new H2Database()),
-                "the lock-table generator must not hijack other dialects");
-    }
-
-    @Test
-    void lockTableUsesTrinoPriority() {
-        assertEquals(TrinoDatabase.TRINO_PRIORITY_DATABASE,
-                new TrinoCreateDatabaseChangeLogLockTableGenerator().getPriority());
-    }
 
     @Test
     void lockTableHasNoPrimaryKey() {
@@ -66,21 +101,6 @@ class TrinoSqlGeneratorsUnitTest {
     }
 
     // --- TrinoSelectFromDatabaseChangeLogGenerator ---
-
-    @Test
-    void selectAppliesOnlyToTrino() {
-        assertTrue(new TrinoSelectFromDatabaseChangeLogGenerator()
-                .supports(new SelectFromDatabaseChangeLogStatement("ID"), db));
-        assertFalse(new TrinoSelectFromDatabaseChangeLogGenerator()
-                .supports(new SelectFromDatabaseChangeLogStatement("ID"), new H2Database()),
-                "the SELECT generator must not hijack other dialects");
-    }
-
-    @Test
-    void selectUsesTrinoPriority() {
-        assertEquals(TrinoDatabase.TRINO_PRIORITY_DATABASE,
-                new TrinoSelectFromDatabaseChangeLogGenerator().getPriority());
-    }
 
     @Test
     void selectKeepsColumnListLowerCase() {
@@ -115,18 +135,6 @@ class TrinoSqlGeneratorsUnitTest {
     // --- TrinoAddColumnGenerator ---
 
     @Test
-    void addColumnAppliesOnlyToTrino() {
-        assertTrue(new TrinoAddColumnGenerator().supports(addColumn(), db));
-        assertFalse(new TrinoAddColumnGenerator().supports(addColumn(), new H2Database()),
-                "the add-column generator must not hijack other dialects");
-    }
-
-    @Test
-    void addColumnUsesTrinoPriority() {
-        assertEquals(TrinoDatabase.TRINO_PRIORITY_DATABASE, new TrinoAddColumnGenerator().getPriority());
-    }
-
-    @Test
     void addColumnIncludesTheColumnKeyword() {
         // Trino rejects a bare ADD: "mismatched input '<name>'. Expecting: '.', 'ADD'".
         assertEquals("ALTER TABLE t ADD COLUMN txt VARCHAR(64)", addColumnSql());
@@ -147,18 +155,6 @@ class TrinoSqlGeneratorsUnitTest {
     }
 
     // --- TrinoRenameColumnGenerator ---
-
-    @Test
-    void renameColumnAppliesOnlyToTrino() {
-        assertTrue(new TrinoRenameColumnGenerator().supports(renameColumn(), db));
-        assertFalse(new TrinoRenameColumnGenerator().supports(renameColumn(), new H2Database()),
-                "the rename-column generator must not hijack other dialects");
-    }
-
-    @Test
-    void renameColumnUsesTrinoPriority() {
-        assertEquals(TrinoDatabase.TRINO_PRIORITY_DATABASE, new TrinoRenameColumnGenerator().getPriority());
-    }
 
     @Test
     void renameColumnUsesTrinoSyntax() {

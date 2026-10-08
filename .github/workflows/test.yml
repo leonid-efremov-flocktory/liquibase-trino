@@ -1,7 +1,13 @@
 name: Test
 
-# Tests triggered by a tag: the stand from src/test/trino/docker-compose.yml
-# (Trino + Iceberg REST catalog + S3 storage) is brought up, then mvn test runs.
+# Tests for anything landing on main or on a pull request, plus tags: the stand from
+# src/test/trino/docker-compose.yml (Trino + Iceberg REST catalog + S3 storage) is brought up,
+# then mvn test runs.
+#
+# Tag-only runs left a broken commit free to reach a release: the version check below catches a
+# tag that does not match pom.xml, but nothing had tested the commit it was applied to since the
+# previous tag. Running on pull_request is what makes the check land before the tag rather than
+# after it.
 #
 # The stand is brought up and torn down by run-tests.sh, the same script a developer runs
 # locally, so the readiness handling exists in one place: the Trino healthcheck in the compose
@@ -12,8 +18,11 @@ name: Test
 # git tag. jitpack.yml (JDK 17) in the repository root tells JitPack which JDK to use.
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  pull_request:
   workflow_dispatch:
 
 permissions:

@@ -1,23 +1,16 @@
 package liquibase.ext.trino.snapshot;
 
-import liquibase.command.CommandResults;
-import liquibase.command.CommandScope;
-import liquibase.command.core.DiffCommandStep;
-import liquibase.database.Database;
-import liquibase.diff.DiffResult;
 import liquibase.ext.trino.TrinoTestSupport;
-import liquibase.structure.DatabaseObject;
+import liquibase.ext.trino.TrinoTestSupport.Diff;
 import liquibase.structure.core.Table;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
-import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.Set;
-import java.util.stream.Collectors;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -41,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code referenceUrl} + {@code referenceSchemas} against the same cluster, which is enough to compare
  * two schemas and keeps the stand to a single container.
  */
+@Tag("integration")
 @EnabledIf("liquibase.ext.trino.TrinoTestSupport#isReachable")
 class TrinoDiffIntegrationTest {
 
@@ -50,42 +44,31 @@ class TrinoDiffIntegrationTest {
     /** The side that plays the part of the one about to be deployed. */
     private static final String TARGET_SCHEMA = "diff_target_probe";
 
-    private static final String SHARED_TABLE = "shared_table";
-    private static final String REFERENCE_ONLY = "reference_only_table";
-    private static final String TARGET_ONLY = "target_only_table";
+    private static final String SHARED_TABLE = TrinoTestSupport.DIFF_SHARED_TABLE;
+    private static final String REFERENCE_ONLY = TrinoTestSupport.DIFF_REFERENCE_ONLY;
+    private static final String TARGET_ONLY = TrinoTestSupport.DIFF_TARGET_ONLY;
+
+    /** Both sides start from the same columns; the tests that need a difference change them. */
+    private static final String COLUMNS = "(id integer, name varchar)";
     private static final String DIFFERENT_TABLE = "different_table";
 
     private static String catalog;
 
     @BeforeEach
     void setup() throws Exception {
-        try (Database db = TrinoTestSupport.openDatabase()) {
-            catalog = db.getDefaultCatalogName();
-        }
-        reference(catalog + "." + REFERENCE_SCHEMA, "(id integer, name varchar)");
-        target(catalog + "." + TARGET_SCHEMA, "(id integer, name varchar)");
+        catalog = TrinoTestSupport.catalog();
+        TrinoTestSupport.createDiffFixture(
+                TrinoTestSupport.qualified(catalog, REFERENCE_SCHEMA), TrinoTestSupport.qualified(catalog, TARGET_SCHEMA),
+                COLUMNS, COLUMNS);
+
+        // The one table that exists on both sides but differs: same name, different columns.
+        TrinoTestSupport.execute("CREATE TABLE " + TrinoTestSupport.qualified(catalog, REFERENCE_SCHEMA) + "."
+                + DIFFERENT_TABLE + " " + COLUMNS);
     }
 
-    /**
-     * Reference side, which is also the side the tests extend per case.
-     * <p>
-     * Created from scratch on every test rather than incrementally: these tests are about what the
-     * comparison says, and a leftover object from a previous case would change that answer.
-     */
-    private void reference(String schema, String columns) throws Exception {
-        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
-        TrinoTestSupport.execute("CREATE SCHEMA " + schema);
-        TrinoTestSupport.execute("CREATE TABLE " + schema + "." + SHARED_TABLE + " " + columns);
-        TrinoTestSupport.execute("CREATE TABLE " + schema + "." + REFERENCE_ONLY + " " + columns);
-        TrinoTestSupport.execute("CREATE TABLE " + schema + "." + DIFFERENT_TABLE + " " + columns);
-    }
-
-    /** Target side: the reference minus one object, plus one of its own. */
-    private void target(String schema, String columns) throws Exception {
-        TrinoTestSupport.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
-        TrinoTestSupport.execute("CREATE SCHEMA " + schema);
-        TrinoTestSupport.execute("CREATE TABLE " + schema + "." + SHARED_TABLE + " " + columns);
-        TrinoTestSupport.execute("CREATE TABLE " + schema + "." + TARGET_ONLY + " " + columns);
+    @AfterAll
+    static void dropProbeSchemas() throws Exception {
+        TrinoTestSupport.dropSchemas(TrinoTestSupport.qualified(catalog, REFERENCE_SCHEMA), TrinoTestSupport.qualified(catalog, TARGET_SCHEMA));
     }
 
     // --- What the comparison reports ---
@@ -99,9 +82,9 @@ class TrinoDiffIntegrationTest {
     void anObjectPresentOnOnlyOneSideIsReported() throws Exception {
         Diff diff = diff();
 
-        assertTrue(names(diff.result().getMissingObjects(Table.class)).contains(REFERENCE_ONLY),
+        assertTrue(TrinoTestSupport.names(diff.result().getMissingObjects(Table.class)).contains(REFERENCE_ONLY),
                 "a table that exists only on the reference side must be reported missing:\n" + diff.render());
-        assertTrue(names(diff.result().getUnexpectedObjects(Table.class)).contains(TARGET_ONLY),
+        assertTrue(TrinoTestSupport.names(diff.result().getUnexpectedObjects(Table.class)).contains(TARGET_ONLY),
                 "a table that exists only on the target side must be reported unexpected:\n" + diff.render());
     }
 
@@ -110,9 +93,9 @@ class TrinoDiffIntegrationTest {
     void anIdenticalObjectIsNotReported() throws Exception {
         Diff diff = diff();
 
-        assertFalse(names(diff.result().getMissingObjects(Table.class)).contains(SHARED_TABLE),
+        assertFalse(TrinoTestSupport.names(diff.result().getMissingObjects(Table.class)).contains(SHARED_TABLE),
                 "a table on both sides must not be reported missing:\n" + diff.render());
-        assertFalse(names(diff.result().getUnexpectedObjects(Table.class)).contains(SHARED_TABLE),
+        assertFalse(TrinoTestSupport.names(diff.result().getUnexpectedObjects(Table.class)).contains(SHARED_TABLE),
                 "a table on both sides must not be reported unexpected:\n" + diff.render());
     }
 
@@ -122,7 +105,12 @@ class TrinoDiffIntegrationTest {
      */
     @Test
     void aColumnDifferenceIsReportedAgainstItsTable() throws Exception {
-        target(catalog + "." + TARGET_SCHEMA, "(id integer, name varchar, extra boolean)");
+        // Rebuild the target side alone: the reference has to stay as the fixture left it.
+        TrinoTestSupport.resetSchemas(TrinoTestSupport.qualified(catalog, TARGET_SCHEMA));
+        TrinoTestSupport.execute("CREATE TABLE " + TrinoTestSupport.qualified(catalog, TARGET_SCHEMA) + "."
+                + SHARED_TABLE + " (id integer, name varchar, extra boolean)");
+        TrinoTestSupport.execute("CREATE TABLE " + TrinoTestSupport.qualified(catalog, TARGET_SCHEMA) + "."
+                + TARGET_ONLY + " " + COLUMNS);
 
         Diff diff = diff();
 
@@ -148,28 +136,14 @@ class TrinoDiffIntegrationTest {
      */
     @Test
     void aDifferenceOnlyInTheConnectorPropertiesIsReportedAsChanged() throws Exception {
-        TrinoTestSupport.execute("DROP TABLE " + catalog + "." + TARGET_SCHEMA + "." + SHARED_TABLE);
-        TrinoTestSupport.execute("CREATE TABLE " + catalog + "." + TARGET_SCHEMA + "." + SHARED_TABLE
+        TrinoTestSupport.execute("DROP TABLE " + TrinoTestSupport.qualified(catalog, TARGET_SCHEMA) + "." + SHARED_TABLE);
+        TrinoTestSupport.execute("CREATE TABLE " + TrinoTestSupport.qualified(catalog, TARGET_SCHEMA) + "." + SHARED_TABLE
                 + " (id integer, name varchar) WITH (format = 'ORC')");
 
         Diff diff = diff();
 
         assertTrue(changedNames(diff).contains(SHARED_TABLE),
                 "a difference confined to trino.ddl must still be detected:\n" + diff.render());
-    }
-
-    // --- The command itself ---
-
-    /**
-     * The claim the other cases rest on: an ordinary mismatch must not fail the command. A diff that
-     * threw on a difference would be unusable, since a difference is the normal case.
-     */
-    @Test
-    void aDiffWithDifferencesCompletes() throws Exception {
-        Diff diff = diff();
-
-        assertFalse(diff.result().getMissingObjects().isEmpty(),
-                "the fixture must really differ, or this test proves nothing:\n" + diff.render());
     }
 
     // --- Plumbing ---
@@ -181,42 +155,10 @@ class TrinoDiffIntegrationTest {
      * instance from one of the two sides, and which side that is not something a test should depend on.
      */
     private static Set<String> changedNames(Diff diff) {
-        return diff.result().getChangedObjects(Table.class).keySet().stream()
-                .map(DatabaseObject::getName)
-                .collect(Collectors.toSet());
-    }
-
-    private static Set<String> names(Set<? extends DatabaseObject> objects) {
-        return objects.stream().map(DatabaseObject::getName).collect(Collectors.toSet());
-    }
-
-    /** One diff run, keeping both the structured result and the text a user would have read. */
-    private record Diff(DiffResult result, String output) {
-
-        /** What to print when an assertion about this run fails. */
-        String render() {
-            return output.isEmpty()
-                    ? "missing=" + names(result.getMissingObjects(Table.class))
-                        + " unexpected=" + names(result.getUnexpectedObjects(Table.class))
-                        + " changed=" + result.getChangedObjects(Table.class).keySet()
-                    : output;
-        }
+        return TrinoTestSupport.names(diff.result().getChangedObjects(Table.class).keySet());
     }
 
     private static Diff diff() throws Exception {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        CommandResults results = new CommandScope(DiffCommandStep.COMMAND_NAME[0])
-                .addArgumentValue("url", TrinoTestSupport.url())
-                .addArgumentValue("username", TrinoTestSupport.user())
-                .addArgumentValue("referenceUrl", TrinoTestSupport.url())
-                .addArgumentValue("referenceUsername", TrinoTestSupport.user())
-                // The schema arguments live in PreCompareCommandStep, not DiffCommandStep, and are
-                // passed by name because they are hidden arguments with no public constant to reach for.
-                .addArgumentValue("schemas", TARGET_SCHEMA)
-                .addArgumentValue("referenceSchemas", REFERENCE_SCHEMA)
-                .setOutput(out)
-                .execute();
-        DiffResult result = results.getResult(DiffCommandStep.DIFF_RESULT);
-        return new Diff(result, out.toString(StandardCharsets.UTF_8));
+        return TrinoTestSupport.diff(REFERENCE_SCHEMA, TARGET_SCHEMA);
     }
 }

@@ -336,10 +336,7 @@ Notes on individual tests — **89 tests, 54 needing the stand, 35 without**:
   fixture's tracking table. The stand is reset before each case, tracking tables included:
   left behind, Liquibase would consider the changesets already run and the case would assert
   against an empty schema.
-- `TrinoChangelogRollbackUnitTest` (1) — that an empty XML `<rollback/>` is parsed into an
-  `EmptyChange`. Needs no running Trino. The *contents* of the rollback blocks are checked
-  by `TrinoRollbackIntegrationTest`, which parses the same fixture and then executes the
-  generated SQL on Trino, so it covers strictly more.
+
 - `TrinoSnapshotCommandIntegrationTest` (3) — the `snapshot` command end to end: the fixture's
   table, view and schema come back, the `trino.ddl` attribute holds the server's text
   including `WITH (` and `location = 's3://`, and the output carries no `indexes` or
