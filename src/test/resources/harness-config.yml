@@ -1,0 +1,30 @@
+# Liquibase Test Harness configuration — stage 2 of the test rewrite (.opencode/plan.md).
+# Loaded once by TestConfig from the classpath root. The URL below is the default stand;
+# TrinoHarnessConnectionSpec sets the -DdbUrl / -DdbUsername seam BEFORE the first read of
+# TestConfig, so a TRINO_TEST_URL / -Dtrino.test.url override reaches the harness as well.
+# Only fields that exist on TestConfig / DatabaseUnderTest — snakeyaml instantiates the
+# classes and rejects unknown keys.
+inputFormat: xml
+context: testContext
+# revalidateSql: false makes ChangeObjectTests / ChangeDataTests stop right after the
+# expectedSql comparison (both specs `return` in the "verify expected sql" block), so the
+# `update` phase — and with it the expectedSnapshot / expectedResultSet checks — never runs.
+# true is what stage 4/5 need: the change is applied and rolled back per case, data cases
+# re-read the table and assert the result set. The expectedSql assert itself is strict in
+# both modes (the saveAsExpectedSql auto-write fires only when the expected file is missing).
+revalidateSql: true
+# initDB on: DatabaseConnectionUtil.init() runs the lock-table DDL, which must succeed through
+# our TrinoCreateDatabaseChangeLogLockTableGenerator. That used to fail because the harness
+# switches the connection to autoCommit=false (DatabaseTestContext.openConnection), and on Trino
+# the driver then wraps every metadata one-liner in an implicit transaction that a
+# cancel-on-close can abort. Fixed at the source: TrinoDatabase wraps its connection in
+# TrinoJdbcConnection, which ignores setAutoCommit, so the dialect stays on autoCommit=true and
+# the lock table is created in the session schema (trino_harness) without a workaround.
+initDB: true
+databasesUnderTest:
+  - name: trino            # TrinoDatabase.getShortName()
+    prefix: docker
+    version: "464"
+    url: jdbc:trino://localhost:8081/iceberg_catalog/trino_harness
+    username: smoke
+    dbSchema: trino_harness

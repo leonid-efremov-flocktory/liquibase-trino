@@ -1,0 +1,2 @@
+CREATE SCHEMA IF NOT EXISTS iceberg_catalog.trino_harness_schema
+DROP SCHEMA IF EXISTS iceberg_catalog.trino_harness_schema CASCADE

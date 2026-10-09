@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!-- The other schema-DDL case: create a scratch schema, drop it, recreate it on rollback. -->
+    <changeSet id="1" author="Leonid-Efremov">
+        <sql>
+            CREATE SCHEMA IF NOT EXISTS iceberg_catalog.trino_harness_schema;
+        </sql>
+        <rollback>
+            <sql>
+                DROP SCHEMA IF EXISTS iceberg_catalog.trino_harness_schema CASCADE;
+            </sql>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="2" author="Leonid-Efremov">
+        <sql>
+            DROP SCHEMA IF EXISTS iceberg_catalog.trino_harness_schema CASCADE;
+        </sql>
+        <rollback>
+            <sql>
+                CREATE SCHEMA IF NOT EXISTS iceberg_catalog.trino_harness_schema;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

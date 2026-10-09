@@ -44,7 +44,19 @@
              В дистрибутиве liquibase 5.0.4 уже лежит h2.jar этой же версии, поэтому при
              сборке образа его нужно исключить (см. docker/liquibase/Dockerfile в dwh_migrations). -->
         <h2.version>2.4.240</h2.version>
-        <junit.version>5.10.2</junit.version>
+        <junit.version>6.1.0</junit.version>
+
+        <!-- Groovy + Spock + Liquibase Test Harness stack, part of the default test
+             build since stage 1 of the test rewrite (.opencode/plan.md).
+             The versions are exactly what liquibase-test-harness 1.0.12 declares
+             (groovy-all 5.0.6 / spock-core 2.4-groovy-5.0 / junit 6.1.0): its own
+             ChangeObjectTests / ChangeDataTests specs are compiled against them, and a
+             lower Spock (2.3) fails at runtime with
+             NoSuchMethod SpecificationContext.setCurrentBlock. -->
+        <groovy.version>5.0.6</groovy.version>
+        <spock.version>2.4-groovy-5.0</spock.version>
+        <liquibase-test-harness.version>1.0.12</liquibase-test-harness.version>
+        <gmavenplus-plugin.version>3.0.2</gmavenplus-plugin.version>
 
         <!-- Версии плагинов сборки. Maven не берёт их из super-POM надёжно,
              и без явного указания сборка падает WARNING'ом о неполном effective model. -->
@@ -53,6 +65,21 @@
         <!-- 0.8.8+ умеет читать class file 61 (JDK 17), на котором собран плагин. -->
         <jacoco-maven-plugin.version>0.8.12</jacoco-maven-plugin.version>
     </properties>
+
+    <!-- harness 1.0.12 is built against junit 6.1.0 / junit-platform from that BOM;
+         the import below is the single place that pins the whole org.junit family, so the
+         harness's @Suite classes and our @Tag/@EnabledIf tests run on one version. -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <!-- Единственный источник правды по зависимостям плагина.
          Потребители (в т.ч. docker/liquibase) указывают только координаты плагина,
@@ -82,10 +109,91 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- Version from junit-bom; scope test. -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Groovy + Spock + the Liquibase Test Harness are default test infrastructure
+             since stage 1 of the test rewrite (.opencode/plan.md): `mvn test` and
+             `mvn test -Punit` both compile src/test/groovy and discover its specs. -->
+
+        <!-- The harness jar with its whole transitive graph cut: *:* (wildcard exclusions,
+             Maven >= 3.2.1) drops liquibase-core:5.0.3, five JDBC drivers, groovy 5.0.6 /
+             spock 2.4 / junit 6.1.0 and everything else it declares. What its code actually
+             imports — verified against the v1.0.12 sources — is re-added explicitly below; on
+             a harness upgrade, diff `grep '^import '` over its sources against this list. -->
+        <dependency>
+            <groupId>org.liquibase</groupId>
+            <artifactId>liquibase-test-harness</artifactId>
+            <version>${liquibase-test-harness.version}</version>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- Runtime imports of the harness code, at the versions the harness declares
+             (identical to what liquibase-core 5.0.4 brings anyway). -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+            <version>2.6</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.skyscreamer</groupId>
+            <artifactId>jsonassert</artifactId>
+            <version>1.5.3</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>2.22.0</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Groovy core (the compiler and runtime Spock needs) plus groovy-json, the only
+             extra module the harness touches — it calls JsonSlurper. The harness's own
+             groovy-all is cut, so these two are the whole Groovy stack: no swing, ant,
+             groovysh, groovydoc, servlet or groovy-test jar to drag their own third-party
+             dependencies in. spock-core pulls groovy 5.0.6 transitively; the direct
+             declaration here wins and keeps the line on ${groovy.version}. -->
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy</artifactId>
+            <version>${groovy.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy-json</artifactId>
+            <version>${groovy.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.spockframework</groupId>
+            <artifactId>spock-core</artifactId>
+            <version>${spock.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- junit-bom pins both to the platform version from bom 6.1.0. The launcher is what
+             surefire resolves from the test classpath; junit-platform-suite is what the
+             harness's @Suite classes — stages 3+ — are built on. -->
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-suite</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -122,10 +230,48 @@
                 </configuration>
             </plugin>
 
+            <!-- addTestSources registers src/test/groovy (default phase initialize, default
+                 dir src/test/groovy/**/*.groovy); compileTests runs at test-compile after
+                 maven-compiler-plugin — declared after it so the spec sees the compiled Java
+                 test classes. No `compile` goal: src/main/groovy does not exist and must not —
+                 the published artifact is a Java jar. -->
+            <plugin>
+                <groupId>org.codehaus.gmavenplus</groupId>
+                <artifactId>gmavenplus-plugin</artifactId>
+                <version>${gmavenplus-plugin.version}</version>
+                <!-- Groovy 5 refuses target 1.8 (gmavenplus 3.0.2 default); emitting 17 also
+                     keeps the spec classes on a class shape the JDK 17 toolchain accepts. -->
+                <configuration>
+                    <targetBytecode>17</targetBytecode>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>addTestSources</goal>
+                            <goal>compileTests</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Surefire's stock includes stop at *Test / *Tests / *TestCase — *Spec and
+                 *SuiteIT are not among them, and a build that silently discovered zero specs
+                 would still read as green. The four defaults are repeated because <includes>
+                 replaces the list, it does not extend it. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <includes>
+                        <include>**/Test*.java</include>
+                        <include>**/*Test.java</include>
+                        <include>**/*Tests.java</include>
+                        <include>**/*TestCase.java</include>
+                        <include>**/*Spec.java</include>
+                        <include>**/*SuiteIT.java</include>
+                    </includes>
+                </configuration>
             </plugin>
 
             <!-- Покрытие нужно, чтобы «тесты можно сократить, покрытие не падает» было
@@ -196,10 +342,11 @@
         </plugins>
     </build>
 
-    <!-- `mvn test -Punit` runs only the tests that need no Trino stand, which is instant and
-         needs no docker. The default build runs everything: the integration classes skip
-         themselves when the stand is unreachable. The split needs no tags in the test code —
-         surefire's excludes work off the class names the sources already follow. -->
+    <!-- The default `mvn test` runs everything: the harness specs and the integration
+         classes skip themselves when the stand is unreachable (@IgnoreIf / @EnabledIf).
+         `mvn test -Punit` runs only the tests that need no Trino stand, which is instant and
+         needs no docker: surefire excludes the @Tag("integration") group, which every test
+         that needs the stand carries. -->
     <profiles>
         <profile>
             <id>unit</id>
@@ -211,14 +358,23 @@
                         <configuration>
                             <!--
                               By tag, not by file name: every test needing a live Trino carries
-                              @Tag("integration"), including two whose names do not say so
-                              (TrinoGoldenSqlTest, TrinoTableSnapshotGeneratorUnitTest). Matching
-                              **/*IntegrationTest.java skipped neither, and a -Punit that quietly
-                              needs the stand is not the "no docker" profile it claims to be.
-                              @EnabledIf stays as the guard for the default build, where no stand
-                              is running: it makes such tests skip rather than fail.
+                              @Tag("integration"), including one whose name does not say so
+                              (TrinoTableSnapshotGeneratorUnitTest). Matching by file name would
+                              miss it, and a -Punit that quietly needs the stand is not the
+                              "no docker" profile it claims to be. @EnabledIf stays as the guard
+                              for the default build, where no stand is running: it makes such
+                              tests skip rather than fail.
                             -->
                             <excludedGroups>integration</excludedGroups>
+                            <!-- The harness suite classes have no @Tag("integration") (the
+                                 reference bigquery suite is empty and is never excluded), yet
+                                 they need a live Trino stand: ContributedHarnessSuiteIT under
+                                 the default includes would turn -Punit into a 120-test docker
+                                 run. Drop them by file name here; tag exclusion for the unit
+                                 tests keeps working as documented above. -->
+                            <excludes>
+                                <exclude>**/*SuiteIT.java</exclude>
+                            </excludes>
                         </configuration>
                     </plugin>
                 </plugins>

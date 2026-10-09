@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <changeSet id="1" author="Leonid-Efremov">
+        <createTable catalogName="iceberg_catalog"
+                     schemaName="trino_harness"
+                     tableName="rename_table_before">
+            <column name="id" type="INT"/>
+        </createTable>
+        <rollback>
+            <dropTable catalogName="iceberg_catalog"
+                       schemaName="trino_harness"
+                       tableName="rename_table_before"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="2" author="Leonid-Efremov">
+        <renameTable catalogName="iceberg_catalog"
+                     schemaName="trino_harness"
+                     oldTableName="rename_table_before"
+                     newTableName="rename_table_after"/>
+        <rollback>
+            <renameTable catalogName="iceberg_catalog"
+                         schemaName="trino_harness"
+                         oldTableName="t_after"
+                         newTableName="rename_table_before"/>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

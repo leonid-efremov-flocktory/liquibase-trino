@@ -33,7 +33,6 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -109,12 +108,18 @@ public final class TrinoTestSupport {
     private TrinoTestSupport() {
     }
 
-    private static String url() {
+    /**
+     * The stand's JDBC URL: {@code trino.test.url} / {@code TRINO_TEST_URL}, defaulting to
+     * the docker-compose stand. Public — the harness spec reads it to build the {@code dbUrl}
+     * seam that points the Liquibase Test Harness at the same stand.
+     */
+    public static String url() {
         return System.getProperty("trino.test.url",
                 System.getenv().getOrDefault("TRINO_TEST_URL", "jdbc:trino://localhost:8081/iceberg_catalog"));
     }
 
-    private static String user() {
+    /** The stand's user: {@code trino.test.user} / {@code TRINO_TEST_USER}. See {@link #url()}. */
+    public static String user() {
         return System.getProperty("trino.test.user",
                 System.getenv().getOrDefault("TRINO_TEST_USER", "smoke"));
     }
@@ -633,75 +638,6 @@ public static void createDiffFixture(String referenceSchema, String targetSchema
     public static Set<String> names(Set<? extends DatabaseObject> objects) {
         return objects.stream().map(DatabaseObject::getName).collect(Collectors.toSet());
     }
-
-    /**
-     * Drops everything {@code update-sql} emits that is not the changelog's own SQL.
-     * <p>
-     * The raw output cannot be compared as it stands, because it is not reproducible: it carries
-     * the wall-clock time it ran, the JDBC URL it ran against, the hostname and IP of whoever took
-     * the lock, and a freshly generated deployment id. A golden file holding any of those would
-     * fail on the next run for reasons that have nothing to do with the SQL generator.
-     * <p>
-     * What goes, and nothing else:
-     * <ul>
-     *   <li>statements against {@code databasechangelog} / {@code databasechangeloglock} — Liquibase
-     *       creating its tracking tables, taking the lock and recording the run;</li>
-     *   <li>Liquibase's own headings and header lines, which is why the section titles would
-     *       otherwise survive as headings with nothing under them;</li>
-     *   <li>the blank lines those removals leave behind.</li>
-     * </ul>
-     * Comments inside a changeset are <em>not</em> removed: a user writing
-     * {@code <sql>-- note</sql>} gets that line compared like any other. What is left is the
-     * changeset markers and the statements themselves, verbatim — no trimming, no whitespace
-     * collapsing, no case folding — and that is the part a change in this extension can affect.
-     */
-    public static String withoutLiquibaseBookkeeping(String updateSqlOutput) {
-        StringBuilder result = new StringBuilder();
-        for (String line : updateSqlOutput.split("\n", -1)) {
-            String text = line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
-            if (isLiquibaseNoise(text)) {
-                continue;
-            }
-            if (text.isBlank()) {
-                continue;
-            }
-            if (text.startsWith("-- Changeset ") && !result.isEmpty()) {
-                result.append('\n');
-            }
-            result.append(text).append('\n');
-        }
-        return result.toString();
-    }
-
-    /** Whether a line is Liquibase's bookkeeping rather than something the changelog produced. */
-    private static boolean isLiquibaseNoise(String line) {
-        String lower = line.trim().toLowerCase(Locale.ROOT);
-        if (lower.contains("databasechangelog")) {
-            return true;
-        }
-        if (lower.startsWith("-- ****")) {
-            return true;
-        }
-        return LIQUIBASE_HEADING_PREFIXES.stream().anyMatch(lower::startsWith);
-    }
-
-    /**
-     * Prefixes of the headings {@code update-sql} prints around the run, lower-cased and without
-     * the surrounding comment markers. Matched by prefix because the header lines carry a value:
-     * {@code -- Ran at: 10/7/26, 8:14 AM} would slip past an equality check.
-     */
-    private static final Set<String> LIQUIBASE_HEADING_PREFIXES = Set.of(
-            "-- create database lock table",
-            "-- initialize database lock table",
-            "-- lock database",
-            "-- create database change log table",
-            "-- release database lock",
-            "-- custom sql",
-            "-- update database script",
-            "-- change log",
-            "-- liquibase version",
-            "-- ran at",
-            "-- against");
 
     /**
      * Applies the fixture unless it is already applied. For tests that rely on the applied

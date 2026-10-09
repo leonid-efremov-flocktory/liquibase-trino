@@ -1,0 +1,1 @@
+INVALID TEST -- Trino doesn't support SET DATA TYPE with parameterized types

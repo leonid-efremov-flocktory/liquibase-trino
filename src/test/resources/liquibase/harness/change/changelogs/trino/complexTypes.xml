@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!--
+        Raw SQL rather than <createTable>: Liquibase has no column type for ROW, and the comma
+        inside the type is a comma inside an XML attribute value, not a column separator.
+    -->
+    <changeSet id="1" author="Leonid-Efremov">
+        <sql splitStatements="false">
+            CREATE TABLE iceberg_catalog.trino_harness.complex_types_t (
+                id INT,
+                tags ARRAY(VARCHAR),
+                payload ROW(a INT, b VARCHAR)
+            ) WITH (format = 'PARQUET')
+        </sql>
+        <rollback>
+            <sql>
+                DROP TABLE iceberg_catalog.trino_harness.complex_types_t;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

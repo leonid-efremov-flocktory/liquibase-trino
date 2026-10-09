@@ -2,14 +2,19 @@ package liquibase.ext.trino.database;
 
 import liquibase.CatalogAndSchema;
 import liquibase.database.MockDatabaseConnection;
+import liquibase.database.jvm.JdbcConnection;
 import liquibase.exception.DatabaseException;
 import liquibase.structure.core.Schema;
 import liquibase.structure.core.Table;
 import org.junit.jupiter.api.Test;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -139,6 +144,22 @@ class TrinoDatabaseUnitTest {
         // transactions, so the call has to be a no-op rather than an error.
         assertDoesNotThrow(() -> db.setAutoCommit(false));
         assertDoesNotThrow(() -> db.setAutoCommit(true));
+    }
+
+    @Test
+    void setConnectionWrapsJdbcConnectionSoAutoCommitCannotBeDisabled() throws Exception {
+        // The Liquibase Test Harness flips autoCommit on the Database's own connection
+        // (DatabaseTestContext), bypassing TrinoDatabase.setAutoCommit. The wrapper is what
+        // keeps Trino off a transaction there; see TrinoJdbcConnection and plan stage 2.
+        Connection raw = DriverManager.getConnection("jdbc:h2:mem:trino_wrap");
+        TrinoDatabase database = new TrinoDatabase();
+        database.setConnection(new JdbcConnection(raw));
+
+        assertInstanceOf(TrinoJdbcConnection.class, database.getConnection());
+        assertEquals(raw, ((JdbcConnection) database.getConnection()).getUnderlyingConnection());
+
+        database.getConnection().setAutoCommit(false);
+        assertTrue(database.getConnection().getAutoCommit(), "autoCommit must stay on for Trino");
     }
 
     /**

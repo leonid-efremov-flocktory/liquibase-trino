@@ -1,0 +1,1 @@
+COMMENT ON TABLE trino_harness.authors IS 'A Test Remark'

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <changeSet id="1" author="Leonid-Efremov">
+        <createTable catalogName="iceberg_catalog"
+                     schemaName="trino_harness"
+                     tableName="drop_view_t">
+            <column name="id" type="INT"/>
+            <column name="txt" type="VARCHAR(64)"/>
+        </createTable>
+        <rollback>
+            <dropTable catalogName="iceberg_catalog"
+                       schemaName="trino_harness"
+                       tableName="drop_view_t"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="2" author="Leonid-Efremov">
+        <createView catalogName="iceberg_catalog"
+                    schemaName="trino_harness"
+                    viewName="drop_view_v">SELECT id, txt FROM iceberg_catalog.trino_harness.drop_view_t</createView>
+        <rollback>
+            <dropView catalogName="iceberg_catalog"
+                      schemaName="trino_harness"
+                      viewName="drop_view_v"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="3" author="Leonid-Efremov">
+        <dropView catalogName="iceberg_catalog"
+                  schemaName="trino_harness"
+                  viewName="drop_view_v"/>
+        <rollback/>
+    </changeSet>
+
+</databaseChangeLog>

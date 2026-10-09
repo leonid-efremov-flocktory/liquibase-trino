@@ -1,0 +1,1 @@
+CREATE TABLE trino_harness.create_table (id INT, txt VARCHAR(64))

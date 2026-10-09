@@ -1,0 +1,1 @@
+CREATE SCHEMA IF NOT EXISTS iceberg_catalog.trino_harness_schema

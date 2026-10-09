@@ -1,0 +1,1 @@
+INVALID TEST -- Trino test harness doesn't run OS commands

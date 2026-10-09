@@ -63,6 +63,10 @@ public class TrinoDatabase extends H2Database {
      * private, and Java cannot reach a grandparent method with a plain {@code super}. It must
      * be {@code findSpecial} rather than {@code Method.invoke}: the latter is a virtual call
      * and would land in {@code H2Database} again, recursing forever.
+     * <p>
+     * The connection is wrapped in {@link TrinoJdbcConnection} on the way in, so that callers
+     * holding the {@code Database}'s connection — the Liquibase Test Harness among them —
+     * cannot switch Trino into a transaction. See that class for why.
      */
     private static final MethodHandle ABSTRACT_SET_CONNECTION = abstractSetConnection();
 
@@ -74,8 +78,12 @@ public class TrinoDatabase extends H2Database {
 
     @Override
     public void setConnection(DatabaseConnection conn) {
+        DatabaseConnection effective =
+                conn instanceof JdbcConnection && !(conn instanceof TrinoJdbcConnection)
+                        ? new TrinoJdbcConnection((JdbcConnection) conn)
+                        : conn;
         try {
-            ABSTRACT_SET_CONNECTION.bindTo(this).invokeWithArguments(conn);
+            ABSTRACT_SET_CONNECTION.bindTo(this).invokeWithArguments(effective);
         } catch (RuntimeException | Error e) {
             throw e;
         } catch (Throwable t) {

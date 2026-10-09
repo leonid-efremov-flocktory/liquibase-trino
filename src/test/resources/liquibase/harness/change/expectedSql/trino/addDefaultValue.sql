@@ -1,0 +1,1 @@
+INVALID TEST -- Trino doesn't support column default values

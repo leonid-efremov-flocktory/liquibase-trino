@@ -1,0 +1,1 @@
+INVALID TEST -- modifies createTable with a primary key, which Trino doesn't support

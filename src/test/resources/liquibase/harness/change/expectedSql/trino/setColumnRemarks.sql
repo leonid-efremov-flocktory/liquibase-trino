@@ -1,0 +1,1 @@
+COMMENT ON COLUMN trino_harness.authors.id IS 'A Test Column Remark'

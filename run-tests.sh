@@ -40,6 +40,10 @@ compose() {
 # query, so readiness is settled here — no polling loop, and no waiting inside the tests.
 up() {
     compose up -d --wait
+    # The harness creates its tracking tables during initDB, before any changelog runs, and
+    # Trino has no "create schema on connect" — so the shared harness schema must already exist.
+    docker exec liquibase-trino-test trino --user "$TRINO_USER" --execute \
+        "CREATE SCHEMA IF NOT EXISTS iceberg_catalog.trino_harness" >/dev/null
 }
 
 # Show the objects created by the fixture changesets.

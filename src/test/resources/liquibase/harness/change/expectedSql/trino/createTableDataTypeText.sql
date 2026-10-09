@@ -1,0 +1,1 @@
+INVALID TEST -- Trino has no CLOB column type

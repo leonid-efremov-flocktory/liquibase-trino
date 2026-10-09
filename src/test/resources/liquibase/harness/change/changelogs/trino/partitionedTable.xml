@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!--
+        Raw SQL rather than <createTable>: Liquibase has no change type for a WITH clause, so
+        partitioning can only be carried if the DDL travels whole. This is the case the
+        extension exists for.
+    -->
+    <changeSet id="1" author="Leonid-Efremov">
+        <sql splitStatements="false">
+            CREATE TABLE iceberg_catalog.trino_harness.partitioned_table_t (
+                id INT,
+                ts TIMESTAMP(6)
+            )
+            WITH (
+                format = 'PARQUET',
+                partitioning = ARRAY['day(ts)']
+            )
+        </sql>
+        <rollback>
+            <sql>
+                DROP TABLE iceberg_catalog.trino_harness.partitioned_table_t;
+            </sql>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
