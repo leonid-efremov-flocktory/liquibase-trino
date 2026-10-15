@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!-- loadData on Trino is the CSV path, and the table is created here rather than reused from
+         the seed: ChangeDataTests runs in its own context, so the case has to be self-contained.
+         Only INT/VARCHAR columns: Liquibase emits DATE/TIMESTAMP values as quoted strings in
+         non-prepared mode, which Trino's strict typing rejects (a core limitation, not this
+         dialect's), so date handling is left to the <sql> cases. -->
+    <changeSet id="1" author="Leonid-Efremov">
+        <createTable catalogName="iceberg_catalog"
+                     schemaName="trino_harness"
+                     tableName="load_data_t">
+            <column name="id" type="INT"/>
+            <column name="txt" type="VARCHAR(64)"/>
+        </createTable>
+        <rollback>
+            <dropTable catalogName="iceberg_catalog"
+                       schemaName="trino_harness"
+                       tableName="load_data_t"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="2" author="Leonid-Efremov">
+        <loadData file="loadData.csv"
+                  tableName="load_data_t"
+                  separator=";"
+                  quotchar="'"
+                  relativeToChangelogFile="true"
+                  usePreparedStatements="false">
+            <column name="id" type="numeric"/>
+            <column name="txt" type="string"/>
+        </loadData>
+        <rollback>
+            <delete catalogName="iceberg_catalog"
+                    schemaName="trino_harness"
+                    tableName="load_data_t">
+                <where>id IN (7, 8)</where>
+            </delete>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>

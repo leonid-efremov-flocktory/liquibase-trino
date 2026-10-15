@@ -107,9 +107,12 @@ the line instead.
 
 These 18 cases used to be `TrinoGoldenSqlTest`. In stage 3 they moved to
 `src/test/resources/liquibase/harness/change/changelogs/trino/*.xml`, checked against
-`expectedSql/trino/*.sql` by the standard `ChangeObjectTests`. Object names are per-case,
-because the harness 1.0.12 does not roll back between cases. The table records what each
-case exercised in the old suite; the harness now asserts generated SQL and a snapshot.
+`expectedSql/trino/*.sql` by the standard `ChangeObjectTests`. Object names are per-case
+as a safety net; the harness 1.0.12 does roll back between cases (`RollbackToDate` —
+`rollback --date`), so the chains are additionally balanced end to end. The table records
+what each case exercised in the old suite; the harness now asserts generated SQL; snapshot
+files exist but are `{}` (the harness's sanctioned "skip snapshot verification" — see the
+plan's stage-4 note).
 
 | # | Case | Changelog | Verifies after apply |
 | --- | --- | --- | --- |
@@ -178,7 +181,9 @@ type handling, and the snapshot round-trip. The other 11 go through a generator.
 ## Known limitations recorded at baseline
 
 - The stand is brought up manually via `docker-compose` (`src/test/trino/` +
-  `run-tests.sh`); stage 1 of the plan replaces it with Testcontainers.
+  `run-tests.sh`); plan stage 9 moves it to the harness convention
+  (`src/test/resources/docker/docker-compose-<VERSION>.yml`). Testcontainers are **out of
+  scope** for this plan.
 - The 18 golden cases are now harness resources under
   `src/test/resources/liquibase/harness/change/{changelogs,expectedSql}/trino/`; the Java
   `TrinoGoldenSqlTest` and `liquibase/ext/trino/golden/` are gone.
@@ -190,4 +195,98 @@ type handling, and the snapshot round-trip. The other 11 go through a generator.
   harness strips Liquibase bookkeeping itself in `TestUtils.parseQuery()`.
 - `FastCheckService.clearCache()` workaround (Liquibase 5.0.4 bug) stays regardless
   of the harness migration.
+
+## Harness migration outcome (stages 4–5)
+
+The plan's stages 4 and 5 landed `src/test/groovy/liquibase/ext/trino/ContributedHarnessSuiteIT.groovy`
+(`extends BaseHarnessSuite`, no annotations — the base class already `@SelectClasses([ChangeObjectTests, ChangeDataTests])`).
+It runs in the **default** build; the `unit` profile excludes it via `<exclude>**/*SuiteIT.java</exclude>`.
+
+- **`ChangeObjectTests` — 68 run, 45 skipped, 0 failed.** The 45 skips are `INVALID TEST`
+  expectedSql entries (unchanged); the 23 executed cases compare generated vs expected SQL AND
+  (because `harness-config.yml` sets `revalidateSql: true`) apply the changeset and run the
+  rollback. Rollback chain fixes were required in `renameTable.xml`, `dropTable.xml`, `dropView.xml`;
+  `createTableTimestamp.json`/`setTableRemarks.json` were added as `{}` to shadow non-empty root
+  defaults. `revalidateSql: false` would silently skip `update`/snapshot/resultset — it must stay `true`.
+- **`ChangeDataTests` — 5 run, 1 skipped, 0 failed.** Self-contained cases under
+  `liquibase/harness/data/{changelogs,expectedSql,checkingSql,expectedResultSet}/trino/`:
+  `insert`/`delete` (byte-identical copies of the change-changelogs, not moves — see the note
+  below), `loadData` (CSV into `INT`/`VARCHAR` only —
+  non-prepared `loadData` emits `DATE`/`TIMESTAMP` as quoted strings Trino rejects),
+  `loadUpdateData` (`INVALID TEST` — core emits `MERGE INTO ... KEY(id)`, unparseable by Trino).
+  Each executed case verifies the result set through `checkingSql` + `expectedResultSet`.
+- **Builds:** `mvn -Punit test` = 47/0/0 (no stand, no socket); full `mvn test` with the stand
+  green; `TrinoHarnessConnectionSpec` asserts `revalidateSql == true` (guards the above).
+
+This section supersedes the baseline numbers above for the harness portion; the `changelog`,
+`snapshot`, `database` and `sqlgenerator` package counts are unchanged.
+
+Note on `insert`/`delete`: the `data/changelogs/trino/{insert,delete}.xml` files are
+**copies** of `change/changelogs/trino/{insert,delete}.xml`, not moves. Both suites therefore
+execute the same `insert_t`/`delete_t` objects: `ChangeObjectTests` checks generated SQL,
+`ChangeDataTests` adds the result-set check via `checkingSql`/`expectedResultSet`. The plan
+worded stage 5 as "move"; keeping both is deliberate, because moving would drop `insert`/
+`delete` from `ChangeObjectTests`. The two sets do not interfere — harness isolates cases with
+`rollback --date`, and suite order does not matter.
+
+## Harness migration outcome (stages 6–7)
+
+### Snapshot + generateChangelog — `AdvancedHarnessSuiteIT`
+
+`src/test/groovy/liquibase/ext/trino/AdvancedHarnessSuiteIT.groovy`
+(`@SelectClasses([SnapshotObjectTests, GenerateChangelogTest])`; the annotation overrides the
+base suite's selection, so the composition is explicit).
+
+- **`SnapshotObjectTests` — 9 run, 4 skipped, 0 failed.** The 8 common changelogs plus the
+  Trino `addColumn.xml` override. `addPrimaryKey` / `addUniqueConstraint` /
+  `addForeignKeyConstraint` / `createIndex` are `INVALID TEST -- …` in
+  `snapshot/expectedSnapshot/trino/<name>.json` (the sentinel is checked before `update`).
+  `addColumn` is overridden because the common changelog assigns `valueDate` as a quoted
+  string, which Trino's strict typing rejects (same core cause as `loadData`). For
+  `createTable`/`createView`/`snapshotCatalogAndSchema` the extra catalog-qualified
+  `trino.ddl` attribute is pinned with a regex — that is where verbatim `SHOW CREATE`
+  survives, since `GeneralSnapshotComparator` matches strings as regex.
+- **`GenerateChangelogTest` — 13 run, 10 skipped, 0 failed.** A `generateChangelog/expectedSql/trino/<name>.sql`
+  exists per input changelog: `INVALID TEST` for the unsupported types and `addColumn`, a real
+  file for `createTable`/`createView`; the `createView` input changelog is additionally
+  overridden (the common one reads the absent harness table `authors`).
+- **Caveat.** For xml/yml/json the spec does **not** compare the generated changelog's
+  content — it only runs generation and checks the stored-object directories (Trino has
+  none); the SQL-format verification is commented out upstream. The verbatim round-trip
+  "generated changelog replays the same DDL" is therefore **not** covered by the harness and
+  stays in `TrinoGenerateChangelogIntegrationTest`. `TrinoSnapshotCommandIntegrationTest`,
+  `TrinoMetadataSnapshotIntegrationTest` and `TrinoSchemaSnapshotIntegrationTest` also remain
+  (plugin-specific table/schema discovery, incl. cross-catalog). Their fate is plan stage 10.
+
+### `diff` / `diffChangelog` — not migrated (plan stage 7 deviation)
+
+Both harness specs are unexecutable against Trino; the behaviour stays in
+`TrinoDiffIntegrationTest` / `TrinoDiffChangelogIntegrationTest`:
+
+- `liquibase.harness.compatibility.advanced.AdvancedTest` (whose resource layout —
+  `initSql/{primary,secondary}`, `expectedDiff/<db>/diff.txt` — the plan quotes) calls
+  `dropAll`. Liquibase core emits `DROP TABLE … CASCADE`, which Trino rejects; `dropAll` is
+  unsupported (README). Verified with a `CommandScope("dropAll")` probe on the stand.
+- `liquibase.harness.diff.DiffTests` / `DiffChangelogTests` match target/reference by
+  `name`+`version` from `harness-config.yml`. A self-diff needs a second `trino` entry, but
+  two same-name/same-version entries collapse to one in `buildTestInput`; separating them
+  requires a fake version, which makes every other suite iterate an uninitialized stand.
+
+Even if runnable, such a spec pins only literal diff text and cannot re-express what the Java
+tests assert: verbatim `SHOW CREATE`, a difference visible only in `trino.ddl`, "changed table
+yields an empty changelog", and the unqualified DROP for an unexpected table.
+
+### Accepted coverage shape
+
+The 18 change cases carry `expectedSnapshot/trino/*.json = {}` — the harness's sanctioned
+"skip snapshot verification". Snapshot structure is asserted only in the stage-6 suite, so
+`trino.ddl` (the plugin's core value) is proven for `createTable`/`createView` there, not per
+change case. This is a deliberate KISS trade-off, not a gap to close in this plan; stage 10's
+JaCoCo before/after records it.
+
+### Totals
+
+Full `mvn test` with the stand: **208 run, 0 failed, 0 errors, 60 skipped** (45 change +
+1 data + 4 snapshot + 10 generateChangelog `INVALID TEST`). `mvn -Punit test` = **47/0/0**,
+no stand.
 

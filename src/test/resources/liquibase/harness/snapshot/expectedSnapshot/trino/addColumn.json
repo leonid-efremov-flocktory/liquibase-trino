@@ -1,0 +1,47 @@
+{
+  "snapshot": {
+    "objects": {
+      "liquibase.structure.core.Table": [
+        {
+          "table": {
+            "name": "test_table"
+          }
+        }
+      ],
+      "liquibase.structure.core.Column": [
+        {
+          "column": {
+            "name": "test_column",
+            "type": {
+              "typeName": "integer"
+            }
+          }
+        },
+        {
+          "column": {
+            "name": "varcharcolumn",
+            "type": {
+              "typeName": "varchar"
+            }
+          }
+        },
+        {
+          "column": {
+            "name": "intcolumn",
+            "type": {
+              "typeName": "integer"
+            }
+          }
+        },
+        {
+          "column": {
+            "name": "datecolumn",
+            "type": {
+              "typeName": "date"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

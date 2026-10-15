@@ -1,0 +1,1 @@
+SELECT id, txt FROM trino_harness.delete_t ORDER BY id

@@ -34,7 +34,11 @@
         <dropView catalogName="iceberg_catalog"
                   schemaName="trino_harness"
                   viewName="drop_view_v"/>
-        <rollback/>
+        <rollback>
+            <createView catalogName="iceberg_catalog"
+                        schemaName="trino_harness"
+                        viewName="drop_view_v">SELECT id, txt FROM iceberg_catalog.trino_harness.drop_view_t</createView>
+        </rollback>
     </changeSet>
 
 </databaseChangeLog>

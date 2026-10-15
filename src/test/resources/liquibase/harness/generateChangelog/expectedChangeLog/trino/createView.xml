@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+    <!--
+      Trino override of the shared generateChangelog createView input. The shared one selects
+      from the harness's "authors" table, which this schema never gets, so the update failed
+      before generateChangelog ever ran. This version builds its own base table.
+    -->
+    <changeSet id="1" author="as">
+        <createTable tableName="view_table">
+            <column name="id" type="INT"/>
+        </createTable>
+        <rollback>
+            <dropTable tableName="view_table"/>
+        </rollback>
+    </changeSet>
+    <changeSet id="2" author="oleh">
+        <createView viewName="test_view">
+            select id from view_table
+        </createView>
+        <rollback>
+            <dropView viewName="test_view"/>
+        </rollback>
+    </changeSet>
+</databaseChangeLog>

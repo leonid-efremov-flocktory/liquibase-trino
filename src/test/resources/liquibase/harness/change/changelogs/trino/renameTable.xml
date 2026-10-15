@@ -26,7 +26,7 @@
         <rollback>
             <renameTable catalogName="iceberg_catalog"
                          schemaName="trino_harness"
-                         oldTableName="t_after"
+                         oldTableName="rename_table_after"
                          newTableName="rename_table_before"/>
         </rollback>
     </changeSet>

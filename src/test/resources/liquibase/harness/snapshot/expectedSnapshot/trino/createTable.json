@@ -1,0 +1,24 @@
+{
+  "snapshot": {
+    "objects": {
+      "liquibase.structure.core.Table": [
+        {
+          "table": {
+            "name": "snapshot_test_table",
+            "trino.ddl": "(?s)^CREATE TABLE iceberg_catalog\\.trino_harness\\.snapshot_test_table \\(.*snapshot_test_column integer.*"
+          }
+        }
+      ],
+      "liquibase.structure.core.Column": [
+        {
+          "column": {
+            "name": "snapshot_test_column",
+            "type": {
+              "typeName": "integer"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

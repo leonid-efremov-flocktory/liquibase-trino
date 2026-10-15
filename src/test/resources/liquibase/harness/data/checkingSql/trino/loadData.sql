@@ -1,0 +1,1 @@
+SELECT id, txt FROM trino_harness.load_data_t ORDER BY id

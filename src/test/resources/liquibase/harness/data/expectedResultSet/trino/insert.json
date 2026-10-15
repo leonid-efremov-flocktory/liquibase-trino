@@ -1,0 +1,12 @@
+{
+  "insert": [
+    {
+      "id": 1,
+      "txt": "из insert"
+    },
+    {
+      "id": 2,
+      "txt": "ещё из insert"
+    }
+  ]
+}

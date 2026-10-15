@@ -1,0 +1,1 @@
+INVALID TEST -- Trino doesn't support foreign keys

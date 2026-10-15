@@ -22,7 +22,13 @@
         <dropTable catalogName="iceberg_catalog"
                    schemaName="trino_harness"
                    tableName="drop_table"/>
-        <rollback/>
+        <rollback>
+            <createTable catalogName="iceberg_catalog"
+                         schemaName="trino_harness"
+                         tableName="drop_table">
+                <column name="id" type="INT"/>
+            </createTable>
+        </rollback>
     </changeSet>
 
 </databaseChangeLog>

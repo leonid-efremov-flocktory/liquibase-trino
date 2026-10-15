@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+    <!--
+      Trino override of the shared snapshot addColumn changelog. The shared one also
+      sets column values (value/valueNumeric/valueDate), and the valueDate one emits
+      UPDATE ... SET datecolumn = '2020-09-21' with a quoted string, which Trino rejects
+      under strict typing. The snapshot test only needs the columns to exist, so the
+      values are dropped here.
+    -->
+    <changeSet id="1" author="as">
+        <createTable tableName="test_table">
+            <column name="test_column" type="INT"/>
+        </createTable>
+        <rollback/>
+    </changeSet>
+    <changeSet id="2" author="as">
+        <addColumn tableName="test_table">
+            <column name="varcharColumn" type="varchar(25)"/>
+            <column name="intColumn" type="int"/>
+            <column name="dateColumn" type="date"/>
+        </addColumn>
+        <rollback>
+            <dropTable tableName="test_table"/>
+        </rollback>
+    </changeSet>
+</databaseChangeLog>

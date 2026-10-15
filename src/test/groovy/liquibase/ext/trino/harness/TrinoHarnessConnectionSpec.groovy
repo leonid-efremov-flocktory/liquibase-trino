@@ -75,7 +75,9 @@ class TrinoHarnessConnectionSpec extends Specification {
         expect: "the yaml carries only keys TestConfig knows"
         config.inputFormat == "xml"
         config.context == "testContext"
-        !config.revalidateSql
+        // revalidateSql must stay true: with false both specs return right after the
+        // expectedSql comparison, so update/snapshot/resultset would never run (stages 4-5).
+        config.revalidateSql
 
         and: "the getter, not just the yaml, applies the system-property overrides"
         def entry = config.filteredDatabasesUnderTest[0]

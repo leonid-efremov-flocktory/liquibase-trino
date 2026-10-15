@@ -1,0 +1,1 @@
+SELECT id, txt FROM trino_harness.insert_t ORDER BY id

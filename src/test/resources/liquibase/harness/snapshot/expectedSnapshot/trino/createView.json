@@ -1,0 +1,22 @@
+{
+  "snapshot": {
+    "objects": {
+      "liquibase.structure.core.Table": [
+        {
+          "table": {
+            "name": "view_table"
+          }
+        }
+      ],
+      "liquibase.structure.core.View": [
+        {
+          "view": {
+            "name": "test_view",
+            "definition": "(?s)^SELECT test_column\\s+FROM\\s+view_table$",
+            "trino.ddl": "(?s)^CREATE VIEW iceberg_catalog\\.trino_harness\\.test_view SECURITY DEFINER AS.*"
+          }
+        }
+      ]
+    }
+  }
+}

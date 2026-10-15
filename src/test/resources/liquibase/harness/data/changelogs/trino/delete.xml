@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                            http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <changeSet id="1" author="Leonid-Efremov">
+        <createTable catalogName="iceberg_catalog"
+                     schemaName="trino_harness"
+                     tableName="delete_t">
+            <column name="id" type="INT"/>
+            <column name="txt" type="VARCHAR(64)"/>
+        </createTable>
+        <rollback>
+            <dropTable catalogName="iceberg_catalog"
+                       schemaName="trino_harness"
+                       tableName="delete_t"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="2" author="Leonid-Efremov">
+        <insert catalogName="iceberg_catalog"
+                schemaName="trino_harness"
+                tableName="delete_t">
+            <column name="id" valueNumeric="1"/>
+            <column name="txt" value="остаётся"/>
+        </insert>
+        <insert catalogName="iceberg_catalog"
+                schemaName="trino_harness"
+                tableName="delete_t">
+            <column name="id" valueNumeric="2"/>
+            <column name="txt" value="удаляется"/>
+        </insert>
+        <rollback>
+            <delete catalogName="iceberg_catalog"
+                    schemaName="trino_harness"
+                    tableName="delete_t">
+                <where>id IN (1, 2)</where>
+            </delete>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="3" author="Leonid-Efremov">
+        <delete catalogName="iceberg_catalog"
+                schemaName="trino_harness"
+                tableName="delete_t">
+            <where>id = 2</where>
+        </delete>
+        <rollback>
+            <insert catalogName="iceberg_catalog"
+                    schemaName="trino_harness"
+                    tableName="delete_t">
+                <column name="id" valueNumeric="2"/>
+                <column name="txt" value="удаляется"/>
+            </insert>
+        </rollback>
+    </changeSet>
+
+</databaseChangeLog>
