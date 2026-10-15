@@ -3,14 +3,12 @@ package liquibase.ext.trino.harness
 import liquibase.Scope
 import liquibase.database.Database
 import liquibase.executor.ExecutorService
+import liquibase.ext.trino.TrinoIntegrationSpec
 import liquibase.ext.trino.TrinoTestSupport
 import liquibase.harness.config.TestConfig
 import liquibase.harness.util.DatabaseConnectionUtil
 import liquibase.statement.core.RawSqlStatement
-import spock.lang.IgnoreIf
 import spock.lang.Shared
-import spock.lang.Specification
-import spock.lang.Tag
 
 /**
  * Stage 2 of the test rewrite (.opencode/plan.md): proof that the Liquibase Test Harness
@@ -23,12 +21,10 @@ import spock.lang.Tag
  * creates the schema and is safe to re-run. initDB is true — TrinoDatabase keeps the connection
  * on autoCommit so the harness's own autoCommit(false) flip cannot poison the session.
  *
- * Tagged like the Java integration classes: {@code -Punit} drops it, and without a stand
- * the {@code @IgnoreIf} probe skips it the same way their {@code @EnabledIf} does.
+ * Tagged like the other integration specs through {@link TrinoIntegrationSpec}: {@code -Punit}
+ * drops it, and without a stand the base's {@code @IgnoreIf} probe skips it.
  */
-@Tag("integration")
-@IgnoreIf({ !TrinoTestSupport.isReachable() })
-class TrinoHarnessConnectionSpec extends Specification {
+class TrinoHarnessConnectionSpec extends TrinoIntegrationSpec {
 
     @Shared
     TestConfig config

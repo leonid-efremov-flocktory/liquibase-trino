@@ -98,7 +98,7 @@ git tag v0.2.0 && git push origin main && git push origin v0.2.0
 ## Tests
 
 Tests live in `src/test/java` (JUnit 5). Integration tests need the stand from
-`src/test/trino/docker-compose.yml` (catalog `iceberg_catalog`, port 8081):
+`src/test/resources/docker/docker-compose-464.yml` (catalog `iceberg_catalog`, port 8081):
 
 ```bash
 ./run-tests.sh          # start the stand, run the suite, stop it
@@ -109,7 +109,7 @@ Tests live in `src/test/java` (JUnit 5). Integration tests need the stand from
 ```
 
 Extra arguments after the command are passed through to Maven, e.g.
-`./run-tests.sh test -Dtest=TrinoRollbackIntegrationTest`. If Maven is installed on the host
+`./run-tests.sh test -Dtest=TrinoRollbackSpec`. If Maven is installed on the host
 the script uses it, otherwise it runs the build in a `maven:3.9-eclipse-temurin-17` container
 (Trino is reachable there via `host.docker.internal`). The Trino URL and user can be
 overridden with `TRINO_TEST_URL` / `TRINO_TEST_USER`.
@@ -154,7 +154,7 @@ an apply alone would let the SQL change silently.
 
 ### Test stand
 
-Services in `src/test/trino/docker-compose.yml`:
+Services in `src/test/resources/docker/docker-compose-464.yml`:
 
 | Service | Image | Role |
 | --- | --- | --- |

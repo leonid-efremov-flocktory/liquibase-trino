@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
  * <p>
  * URL and user come from {@code trino.test.url}/{@code trino.test.user} system properties
  * or {@code TRINO_TEST_URL}/{@code TRINO_TEST_USER}, defaulting to the stand from
- * {@code src/test/trino/docker-compose.yml}. Run it with {@code ./run-tests.sh}.
+ * {@code src/test/resources/docker/docker-compose-464.yml}. Run it with {@code ./run-tests.sh}.
  * <p>
  * What belongs here: an operation that two classes would otherwise write out again. What does
  * not: setup that only one class needs, and helpers with a single caller. Those stay private

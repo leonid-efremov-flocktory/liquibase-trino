@@ -21,8 +21,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMPOSE_DIR="$SCRIPT_DIR/src/test/trino"
-COMPOSE_FILE="$COMPOSE_DIR/docker-compose.yml"
+# The stand follows the Liquibase Test Harness convention: one compose file per database
+# version under src/test/resources/docker/, named docker-compose-<VERSION>.yml. Trino 464
+# is the only version tested today; TRINO_VERSION selects another once one is added.
+COMPOSE_DIR="$SCRIPT_DIR/src/test/resources/docker"
+TRINO_VERSION="${TRINO_VERSION:-464}"
+COMPOSE_FILE="$COMPOSE_DIR/docker-compose-${TRINO_VERSION}.yml"
 TRINO_USER="${TRINO_TEST_USER:-smoke}"
 # Extra arguments after the command are passed through to Maven (see usage).
 MAVEN_EXTRA_ARGS=()
@@ -31,6 +35,10 @@ FIXTURE_SCHEMA="iceberg_catalog.dev_test_schema"
 # In information_schema the schema is stored without the catalog, so the table_schema
 # filter uses its bare name — with the qualified name the result was always empty.
 FIXTURE_SCHEMA_NAME="dev_test_schema"
+# The harness's own schema. It must exist before initDB (Trino has no create-schema-on-connect),
+# and the harness URL must name it so InitDB writes the lock table there.
+HARNESS_CATALOG="iceberg_catalog"
+HARNESS_SCHEMA="trino_harness"
 
 compose() {
     docker compose -f "$COMPOSE_FILE" "$@"
@@ -43,7 +51,7 @@ up() {
     # The harness creates its tracking tables during initDB, before any changelog runs, and
     # Trino has no "create schema on connect" — so the shared harness schema must already exist.
     docker exec liquibase-trino-test trino --user "$TRINO_USER" --execute \
-        "CREATE SCHEMA IF NOT EXISTS iceberg_catalog.trino_harness" >/dev/null
+        "CREATE SCHEMA IF NOT EXISTS ${HARNESS_CATALOG}.${HARNESS_SCHEMA}" >/dev/null
 }
 
 # Show the objects created by the fixture changesets.
@@ -66,10 +74,20 @@ run_tests() {
     # Trino is reachable via host.docker.internal. On Docker Desktop (macOS/Windows) that name
     # resolves via the built-in DNS and needs no --add-host; on Linux it does need the flag,
     # since host.docker.internal there points at an unreachable gateway.
+    #
+    # Both the Trino base URL (trino.test.url) and the harness seam (dbUrl/dbUsername) are fed
+    # here. Harness suites run on their own via -Dtest=...HarnessSuiteIT (as CI does), and then
+    # TrinoHarnessConnectionSpec — which otherwise sets that seam — does not run, so the harness
+    # would fall back to the localhost URL in harness-config.yml and miss the container case.
+    local trino_url db_url
     if command -v mvn >/dev/null 2>&1; then
+        trino_url="jdbc:trino://localhost:8081/${HARNESS_CATALOG}"
+        db_url="${trino_url}/${HARNESS_SCHEMA}"
         mvn test \
-            -Dtrino.test.url="jdbc:trino://localhost:8081/iceberg_catalog" \
+            -Dtrino.test.url="$trino_url" \
             -Dtrino.test.user="$TRINO_USER" \
+            -DdbUrl="$db_url" \
+            -DdbUsername="$TRINO_USER" \
             "${MAVEN_EXTRA_ARGS[@]+"${MAVEN_EXTRA_ARGS[@]}"}"
         return
     fi
@@ -78,6 +96,8 @@ run_tests() {
     if [[ "$(uname -s)" != "Darwin" ]]; then
         add_host=(--add-host=host.docker.internal:host-gateway)
     fi
+    trino_url="jdbc:trino://host.docker.internal:8081/${HARNESS_CATALOG}"
+    db_url="${trino_url}/${HARNESS_SCHEMA}"
     docker run --rm \
         "${add_host[@]+"${add_host[@]}"}" \
         -v "$SCRIPT_DIR":/build \
@@ -85,8 +105,10 @@ run_tests() {
         -w /build \
         maven:3.9-eclipse-temurin-17 \
         mvn test \
-            -Dtrino.test.url="jdbc:trino://host.docker.internal:8081/iceberg_catalog" \
+            -Dtrino.test.url="$trino_url" \
             -Dtrino.test.user="$TRINO_USER" \
+            -DdbUrl="$db_url" \
+            -DdbUsername="$TRINO_USER" \
             "${MAVEN_EXTRA_ARGS[@]+"${MAVEN_EXTRA_ARGS[@]}"}"
 }
 

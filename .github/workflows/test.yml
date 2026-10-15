@@ -1,7 +1,7 @@
 name: Test
 
 # Tests for anything landing on main or on a pull request, plus tags: the stand from
-# src/test/trino/docker-compose.yml (Trino + Iceberg REST catalog + S3 storage) is brought up,
+# src/test/resources/docker/docker-compose-464.yml (Trino + Iceberg REST catalog + S3 storage) is brought up,
 # then mvn test runs.
 #
 # Tag-only runs left a broken commit free to reach a release: the version check below catches a

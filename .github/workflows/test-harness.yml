@@ -1,0 +1,68 @@
+name: Liquibase Test Harness
+
+# Runs the Liquibase Test Harness at each verification level the extension claims, against
+# the Trino version(s) in src/test/resources/docker/. Follows the layout README.extensions.md
+# prescribes: one docker-compose-<VERSION>.yml per version, the level selected by the suite
+# name, `continue-on-error` so one level failing does not hide the others, and dorny/test-reporter
+# publishing the results.
+#
+# The stand is started through ./run-tests.sh rather than `docker compose up` directly. The
+# harness needs the trino_harness schema to exist before initDB creates the lock table, and
+# run-tests.sh already handles that (and `up --wait` readiness) in one place — the same script
+# a developer runs. TRINO_VERSION picks docker-compose-<VERSION>.yml.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    name: ${{ matrix.liquibase-support-level }} / Trino ${{ matrix.database-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The levels the extension claims. Foundational is not listed: no foundational
+        # resources exist yet, so there is no suite to run.
+        liquibase-support-level: [Contributed, Advanced]
+        database-version: [464]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Start the stand
+        env:
+          TRINO_VERSION: ${{ matrix.database-version }}
+        run: ./run-tests.sh up
+
+      - name: Run the ${{ matrix.liquibase-support-level }} harness suite
+        continue-on-error: true
+        env:
+          TRINO_VERSION: ${{ matrix.database-version }}
+        run: >-
+          ./run-tests.sh test
+          -DdbVersion=${{ matrix.database-version }}
+          -Dtest=${{ matrix.liquibase-support-level }}HarnessSuiteIT
+
+      - name: Test report
+        if: always()
+        uses: dorny/test-reporter@v1.6.0
+        with:
+          name: Harness ${{ matrix.liquibase-support-level }} (Trino ${{ matrix.database-version }})
+          path: target/surefire-reports/TEST-*.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Stop the stand
+        if: always()
+        env:
+          TRINO_VERSION: ${{ matrix.database-version }}
+        run: ./run-tests.sh down

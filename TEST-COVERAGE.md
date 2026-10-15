@@ -140,29 +140,35 @@ not exercise any SQL generator — their value is changelog parsing, statement s
 type handling, and the snapshot round-trip. The other 11 go through a generator.
 
 
-### Changelog / update / rollback — `changelog` package (4 classes, 20 tests)
+### Changelog / update / rollback — `changelog` package (4 specs, 20 tests)
+
+Migrated to Groovy/Spock in plan stage 8; the class names below are the ones that verify
+these capabilities today.
 
 | Test class | Tests | What it verifies |
 | --- | ---: | --- |
-| `TrinoChangeLogUpdateIntegrationTest` | 6 | Full `update` from scratch (dropAll + fixture): all changesets applied and tracking tables created; every changeset recorded in `DATABASECHANGELOG`; rows carry execution metadata; `DATABASECHANGELOGLOCK` released; fixture's table + data + view exist; repeated `update` does not duplicate data (idempotency) |
-| `TrinoChangelogFormatIntegrationTest` | 4 | `<sqlFile>` changelog applies in XML/YAML/JSON equivalently (property expansion + relative resource paths resolve identically across parsers); XML sqlFile changelog rolls back |
-| `TrinoReadCommandsIntegrationTest` | 6 | Read-side commands through `TrinoSelectFromDatabaseChangeLogGenerator`: `status` empty after update / knows each ran changeset; `listUnrunChangeSets` empty; `history` reads changesets back in execution order; `tag` recorded and found again; tag leaves earlier changesets untagged |
-| `TrinoRollbackIntegrationTest` | 4 | `rollback-sql` writes statements without executing them; `rollback` of last changeset restores view and removes its rows; rollback of remaining changeset drops table+view; rollback of an empty block undoes nothing but still records the changeset |
+| `TrinoChangeLogUpdateSpec` | 6 | Full `update` from scratch (dropAll + fixture): all changesets applied and tracking tables created; every changeset recorded in `DATABASECHANGELOG`; rows carry execution metadata; `DATABASECHANGELOGLOCK` released; fixture's table + data + view exist; repeated `update` does not duplicate data (idempotency) |
+| `TrinoChangelogFormatSpec` | 4 | `<sqlFile>` changelog applies in XML/YAML/JSON equivalently (property expansion + relative resource paths resolve identically across parsers); XML sqlFile changelog rolls back |
+| `TrinoReadCommandsSpec` | 6 | Read-side commands through `TrinoSelectFromDatabaseChangeLogGenerator`: `status` empty after update / knows each ran changeset; `listUnrunChangeSets` empty; `history` reads changesets back in execution order; `tag` recorded and found again; tag leaves earlier changesets untagged |
+| `TrinoRollbackSpec` | 4 | `rollback-sql` writes statements without executing them; `rollback` of last changeset restores view and removes its rows; rollback of remaining changeset drops table+view; rollback of an empty block undoes nothing but still records the changeset |
 
 
 ### Snapshot / diff — `snapshot` package (9 classes, 50 tests)
+
+Mixed Java unit tests and Groovy/Spock specs; the three diff/failure entries were migrated
+in plan stage 8.
 
 | Test class | Tests | What it verifies |
 | --- | ---: | --- |
 | `TrinoDdlFetcherUnitTest` | 12 | `TrinoDdlFetcher` failure modes without a stand: failed DDL read marks the object unkeepable (table/view/runtime), non-Trino database keeps the object, `describe()` naming fallbacks, statement kept without trailing semicolon, missing object is not a failure |
 | `TrinoTableSnapshotGeneratorUnitTest` | 5 | Per-object guard: readable table still snapshotted; unreadable table skipped instead of fatal; unchecked failure skipped; skipped table named in a warning; table whose statement cannot be read is dropped from snapshot |
-| `TrinoSnapshotFailureIntegrationTest` | 11 | End-to-end resilience: unreadable table/view dropped from snapshot but command survives; several unreadable objects; `generate-changelog` survives and omits them; every object skipped ⇒ no changelog file; skipped object named in a warning (parameterized over command × object kind); healthy connection records everything |
+| `TrinoSnapshotFailureSpec` | 11 | End-to-end resilience: unreadable table/view dropped from snapshot but command survives; several unreadable objects; `generate-changelog` survives and omits them; every object skipped ⇒ no changelog file; skipped object named in a warning (parameterized over command × object kind); healthy connection records everything |
 | `TrinoSnapshotCommandIntegrationTest` | 3 | `snapshot` command via `CommandScope`: fixture objects carry verbatim `trino.ddl`; repeated runs identical; unsupported constraint metadata does not fail |
 | `TrinoMetadataSnapshotIntegrationTest` | 3 | Regression: `has()` finds existing tables (lower-case schema filter vs H2 UPPER_CASE dialect), missing table not found, metadata schema filter is lowercase |
 | `TrinoSchemaSnapshotIntegrationTest` | 5 | `TrinoSchemaSnapshotGenerator`: schema found in default catalog; missing schema not found; case-insensitive lookup; schema in another catalog keeps its own catalog; shared schema name resolves to the requested catalog |
 | `TrinoGenerateChangelogIntegrationTest` | 3 | `generate-changelog`: output contains verbatim DDL; generated SQL equals `SHOW CREATE` character for character; generated changelog replays to identical DDL (round trip) |
-| `TrinoDiffIntegrationTest` | 4 | What `diff` reports today, pinned as-is: object on one side reported; identical object not reported; column difference reported against its table; connector-properties-only difference reported as changed |
-| `TrinoDiffChangelogIntegrationTest` | 4 | What `diffChangelog` writes: missing table emitted as verbatim DDL; emitted statement equals server's; unexpected table emitted as drop; changed table with no generator produces no change |
+| `TrinoDiffSpec` | 4 | What `diff` reports today, pinned as-is: object on one side reported; identical object not reported; column difference reported against its table; connector-properties-only difference reported as changed |
+| `TrinoDiffChangelogSpec` | 4 | What `diffChangelog` writes: missing table emitted as verbatim DDL; emitted statement equals server's; unexpected table emitted as drop; changed table with no generator produces no change |
 
 
 ### Database dialect — `database` package (2 classes, 20 tests)
@@ -180,8 +186,8 @@ type handling, and the snapshot round-trip. The other 11 go through a generator.
 
 ## Known limitations recorded at baseline
 
-- The stand is brought up manually via `docker-compose` (`src/test/trino/` +
-  `run-tests.sh`); plan stage 9 moves it to the harness convention
+- The stand is brought up via `docker-compose` (`src/test/resources/docker/` +
+  `run-tests.sh`), following the harness convention
   (`src/test/resources/docker/docker-compose-<VERSION>.yml`). Testcontainers are **out of
   scope** for this plan.
 - The 18 golden cases are now harness resources under
@@ -229,7 +235,7 @@ worded stage 5 as "move"; keeping both is deliberate, because moving would drop 
 `delete` from `ChangeObjectTests`. The two sets do not interfere — harness isolates cases with
 `rollback --date`, and suite order does not matter.
 
-## Harness migration outcome (stages 6–7)
+## Harness migration outcome (stages 6–8)
 
 ### Snapshot + generateChangelog — `AdvancedHarnessSuiteIT`
 
@@ -284,9 +290,34 @@ The 18 change cases carry `expectedSnapshot/trino/*.json = {}` — the harness's
 change case. This is a deliberate KISS trade-off, not a gap to close in this plan; stage 10's
 JaCoCo before/after records it.
 
+### Groovy/Spock specs — the 7 migrated classes (plan stage 8)
+
+The last Java integration classes that the harness cannot express moved to Groovy/Spock under
+one base, `TrinoIntegrationSpec` (`@Tag("integration")` +
+`@IgnoreIf(value = { !TrinoTestSupport.isReachable() }, inherited = true)`). `@IgnoreIf` is the
+one that has to be marked inherited — Spock's `@IgnoreIf` defaults its own `inherited` flag to
+`false`, so without it a subclass runs against a down stand and errors instead of skipping.
+
+- `changelog/{TrinoChangeLogUpdate,TrinoChangelogFormat,TrinoReadCommands,TrinoRollback}Spec.groovy`
+  replace the four `*IntegrationTest` classes;
+- `snapshot/{TrinoSnapshotFailure,TrinoDiff,TrinoDiffChangelog}Spec.groovy` replace the three
+  `*IntegrationTest` classes (diff per the stage-7 deviation);
+- `harness/TrinoHarnessConnectionSpec` now extends the same base.
+
+The capabilities and counts are unchanged (see the tables above); only the language and class
+names differ. `TrinoTestSupport` still holds `snapshotJson` / `generateChangelog*` — their
+removal was deferred by decision (the remaining `snapshot` Java classes use them until stage 10),
+so this stage did not shrink the helper.
+
 ### Totals
 
-Full `mvn test` with the stand: **208 run, 0 failed, 0 errors, 60 skipped** (45 change +
+Full `mvn test` with the stand: **210 run, 0 failed, 0 errors, 60 skipped** (45 change +
 1 data + 4 snapshot + 10 generateChangelog `INVALID TEST`). `mvn -Punit test` = **47/0/0**,
 no stand.
+
+The 210 is **2 more than the 208 logical tests** the migration preserved, and the surplus is a
+reporting artifact, not extra assertions: each Spock data-driven `where:` feature emits an extra
+zero-assertion container node in the surefire XML (here the XML/YAML/JSON format feature and the
+command × object-kind warning feature). Stage 10's before/after comparison should read the
+logical count, not the raw surefire number.
 
