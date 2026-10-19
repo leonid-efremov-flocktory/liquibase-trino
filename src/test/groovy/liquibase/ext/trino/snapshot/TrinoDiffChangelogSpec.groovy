@@ -52,6 +52,11 @@ class TrinoDiffChangelogSpec extends TrinoIntegrationSpec {
     }
 
     def cleanupSpec() {
+        // setup() assigns catalog before any fixture exists; if that first step fails,
+        // catalog is still null and a teardown built from it would mask the real error.
+        if (catalog == null) {
+            return
+        }
         TrinoTestSupport.dropSchemas(TrinoTestSupport.qualified(catalog, REFERENCE_SCHEMA),
                 TrinoTestSupport.qualified(catalog, TARGET_SCHEMA))
     }

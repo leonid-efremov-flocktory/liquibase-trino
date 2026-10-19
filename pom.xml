@@ -5,7 +5,7 @@
 
     <groupId>io.github.leonid-efremov-flocktory</groupId>
     <artifactId>liquibase-trino</artifactId>
-    <version>0.2.0</version>
+    <version>0.2.2</version>
     <packaging>jar</packaging>
 
     <name>Liquibase Extension: Trino support (H2-based shim)</name>
@@ -40,9 +40,6 @@
 
         <liquibase.version>5.0.4</liquibase.version>
         <trino.version>464</trino.version>
-        <!-- Драйвер H2: нужен TrinoDatabase, который наследует H2Database из liquibase-core.
-             В дистрибутиве liquibase 5.0.4 уже лежит h2.jar этой же версии, поэтому при
-             сборке образа его нужно исключить (см. docker/liquibase/Dockerfile в dwh_migrations). -->
         <h2.version>2.4.240</h2.version>
         <junit.version>6.1.0</junit.version>
 
@@ -58,11 +55,8 @@
         <liquibase-test-harness.version>1.0.12</liquibase-test-harness.version>
         <gmavenplus-plugin.version>3.0.2</gmavenplus-plugin.version>
 
-        <!-- Версии плагинов сборки. Maven не берёт их из super-POM надёжно,
-             и без явного указания сборка падает WARNING'ом о неполном effective model. -->
         <maven-resources-plugin.version>3.3.1</maven-resources-plugin.version>
         <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
-        <!-- 0.8.8+ умеет читать class file 61 (JDK 17), на котором собран плагин. -->
         <jacoco-maven-plugin.version>0.8.12</jacoco-maven-plugin.version>
     </properties>
 
@@ -81,27 +75,19 @@
         </dependencies>
     </dependencyManagement>
 
-    <!-- Единственный источник правды по зависимостям плагина.
-         Потребители (в т.ч. docker/liquibase) указывают только координаты плагина,
-         остальное Maven доставляет транзитивно. -->
     <dependencies>
-        <!-- JDBC-драйвер Trino: возвращает product name "Trino", по которому Liquibase
-             выбирает реализацию Database. -->
         <dependency>
             <groupId>io.trino</groupId>
             <artifactId>trino-jdbc</artifactId>
             <version>${trino.version}</version>
         </dependency>
 
-        <!-- Драйвер H2 для класса H2Database, который расширяет TrinoDatabase. -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <version>${h2.version}</version>
         </dependency>
 
-        <!-- Родительский класс TrinoDatabase (H2Database) приходит из самого Liquibase,
-             поэтому в рантайм-дистрибутив не упаковывается. -->
         <dependency>
             <groupId>org.liquibase</groupId>
             <artifactId>liquibase-core</artifactId>
@@ -198,17 +184,6 @@
         </dependency>
     </dependencies>
 
-    <!-- Публикация в GitHub Packages: https://maven.pkg.github.com/leonid-efremov-flocktory/liquibase-trino
-         Логин и токен приходят из ~/.m2/settings.xml (server с id=github), который в CI
-         создаёт шаг publish. -->
-    <distributionManagement>
-        <repository>
-            <id>github</id>
-            <name>GitHub Packages</name>
-            <url>https://maven.pkg.github.com/leonid-efremov-flocktory/liquibase-trino</url>
-        </repository>
-    </distributionManagement>
-
     <build>
         <plugins>
             <plugin>
@@ -274,24 +249,11 @@
                 </configuration>
             </plugin>
 
-            <!-- Покрытие нужно, чтобы «тесты можно сократить, покрытие не падает» было
-                 измеримо, а не на слово: без отчёта тихо исчезающая ветка в тонком
-                 override'е H2Database неотличима от намеренно непокрытой.
-                 prepare-agent подставляет agent в argLine, который surefire не задаёт,
-                 поэтому и не конфликтует с конфигурацией профиля `unit` ниже. -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
                 <version>${jacoco-maven-plugin.version}</version>
                 <configuration>
-                    <!-- Отчёт строится по class-файлам из target/classes, и это указано явно,
-                         а не оставлено на умолчание: goal report по умолчанию берёт
-                         ${project.build.outputDirectory}, то есть main. Тестовые классы лежат
-                         в target/test-classes и в отчёт не попадают.
-                         Перечисление имён вида **/*Test* было бы перебором, который пришлось бы
-                         вести вручную: новый хелпер в тестах попал бы в статистику молча,
-                         и агрегат из 87% тихо сместился бы на код, который к плагину отношения
-                         не имеет. Один путь вместо списка имён такой ошибки не допускает. -->
                     <classDumps>${project.build.outputDirectory}</classDumps>
                 </configuration>
                 <executions>
@@ -311,7 +273,6 @@
                 </executions>
             </plugin>
 
-            <!-- Исходники и javadoc обязательны для публикации в Maven-репозиторий. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>

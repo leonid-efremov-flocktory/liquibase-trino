@@ -11,13 +11,15 @@
 #   ./run-tests.sh ps         show the objects created by the migrations
 #
 # Any extra arguments after the command are passed through to Maven, e.g.
-#   ./run-tests.sh test -Dtest=TrinoRollbackIntegrationTest
+#   ./run-tests.sh test -Dtest=TrinoRollbackSpec
 #
 # Migrated objects stay in the catalog, so a run can be inspected afterwards:
 #   ./run-tests.sh up && ./run-tests.sh test && ./run-tests.sh ps
 #
 # The Trino URL and user can be overridden via the TRINO_TEST_URL / TRINO_TEST_USER
-# environment variables (see TrinoTestSupport).
+# environment variables (see TrinoTestSupport). The URL overrides one of the defaults below
+# and must name the catalog (optionally with a schema) and point at an already running stand;
+# the harness schema is appended when the URL is fed to Maven.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -80,9 +82,17 @@ run_tests() {
     # TrinoHarnessConnectionSpec — which otherwise sets that seam — does not run, so the harness
     # would fall back to the localhost URL in harness-config.yml and miss the container case.
     local trino_url db_url
+    # A host-only override (no catalog in the path) leaves the Trino session without a
+    # catalog: Trino then rejects information_schema queries and the harness has no session
+    # schema to write its lock table to, so such an override cannot work — fail with a
+    # straight answer instead.
+    if [[ -n "${TRINO_TEST_URL:-}" ]] && [[ "${TRINO_TEST_URL#jdbc:trino://}" != */* ]]; then
+        echo "TRINO_TEST_URL must name the catalog, e.g. jdbc:trino://host:port/${HARNESS_CATALOG}: got ${TRINO_TEST_URL}" >&2
+        exit 2
+    fi
     if command -v mvn >/dev/null 2>&1; then
-        trino_url="jdbc:trino://localhost:8081/${HARNESS_CATALOG}"
-        db_url="${trino_url}/${HARNESS_SCHEMA}"
+        trino_url="${TRINO_TEST_URL:-jdbc:trino://localhost:8081/${HARNESS_CATALOG}}"
+        db_url="$(harness_url_from "$trino_url")"
         mvn test \
             -Dtrino.test.url="$trino_url" \
             -Dtrino.test.user="$TRINO_USER" \
@@ -96,8 +106,8 @@ run_tests() {
     if [[ "$(uname -s)" != "Darwin" ]]; then
         add_host=(--add-host=host.docker.internal:host-gateway)
     fi
-    trino_url="jdbc:trino://host.docker.internal:8081/${HARNESS_CATALOG}"
-    db_url="${trino_url}/${HARNESS_SCHEMA}"
+    trino_url="${TRINO_TEST_URL:-jdbc:trino://host.docker.internal:8081/${HARNESS_CATALOG}}"
+    db_url="$(harness_url_from "$trino_url")"
     docker run --rm \
         "${add_host[@]+"${add_host[@]}"}" \
         -v "$SCRIPT_DIR":/build \
@@ -110,6 +120,25 @@ run_tests() {
             -DdbUrl="$db_url" \
             -DdbUsername="$TRINO_USER" \
             "${MAVEN_EXTRA_ARGS[@]+"${MAVEN_EXTRA_ARGS[@]}"}"
+}
+
+# The harness URL as Maven sees it: the Trino URL with the harness schema on it. Such a URL
+# names the catalog alone (the common case) or catalog and schema both (then taken as is);
+# a host-only URL is rejected in run_tests before we get here. The query string, if any, is
+# passed through untouched.
+harness_url_from() {
+    local trino_url="$1"
+    local base="${trino_url%%\?*}"
+    local query=""
+    [[ "$trino_url" == *\?* ]] && query="?${trino_url#*\?}"
+    base="${base#jdbc:trino://}"          # host[:port]/catalog[/schema]
+    local parts=()
+    IFS='/' read -r -a parts <<< "$base"
+    if [[ "${#parts[@]}" -eq 2 ]]; then
+        echo "jdbc:trino://${parts[0]}/${parts[1]}/${HARNESS_SCHEMA}${query}"
+    else
+        echo "jdbc:trino://${base}${query}"
+    fi
 }
 
 case "${1:-}" in

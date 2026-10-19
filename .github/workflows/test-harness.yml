@@ -10,12 +10,18 @@ name: Liquibase Test Harness
 # harness needs the trino_harness schema to exist before initDB creates the lock table, and
 # run-tests.sh already handles that (and `up --wait` readiness) in one place — the same script
 # a developer runs. TRINO_VERSION picks docker-compose-<VERSION>.yml.
+#
+# dorny/test-reporter publishes each job's results as a check run, which needs `checks: write`
+# — any permission not granted defaults to none, so with `contents: read` alone it 403s. The
+# GITHUB_TOKEN of a same-repo PR gets exactly these permissions; for PRs from forks the token
+# is read-only regardless, and the reporter step is skipped by the report-file condition.
 on:
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   harness:
@@ -53,7 +59,9 @@ jobs:
           -Dtest=${{ matrix.liquibase-support-level }}HarnessSuiteIT
 
       - name: Test report
-        if: always()
+        # The explicit file check matters for a failed `up`: with no reports the reporter
+        # hard-fails on "no test report files found" regardless of fail-on-error: false.
+        if: always() && hashFiles('target/surefire-reports/TEST-*.xml') != ''
         uses: dorny/test-reporter@v1.6.0
         with:
           name: Harness ${{ matrix.liquibase-support-level }} (Trino ${{ matrix.database-version }})

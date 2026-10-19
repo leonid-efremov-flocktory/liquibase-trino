@@ -262,7 +262,8 @@ base suite's selection, so the composition is explicit).
   "generated changelog replays the same DDL" is therefore **not** covered by the harness and
   stays in `TrinoGenerateChangelogIntegrationTest`. `TrinoSnapshotCommandIntegrationTest`,
   `TrinoMetadataSnapshotIntegrationTest` and `TrinoSchemaSnapshotIntegrationTest` also remain
-  (plugin-specific table/schema discovery, incl. cross-catalog). Their fate is plan stage 10.
+  (plugin-specific table/schema discovery, incl. cross-catalog). They stay as Java classes —
+  the acceptance section below records the final shape.
 
 ### `diff` / `diffChangelog` — not migrated (plan stage 7 deviation)
 
@@ -305,9 +306,9 @@ one that has to be marked inherited — Spock's `@IgnoreIf` defaults its own `in
 - `harness/TrinoHarnessConnectionSpec` now extends the same base.
 
 The capabilities and counts are unchanged (see the tables above); only the language and class
-names differ. `TrinoTestSupport` still holds `snapshotJson` / `generateChangelog*` — their
-removal was deferred by decision (the remaining `snapshot` Java classes use them until stage 10),
-so this stage did not shrink the helper.
+names differ. `TrinoTestSupport` still holds `snapshotJson` / `generateChangelog*` — stage 10
+decided to keep them: the four remaining `snapshot` Java classes are their callers, and
+migrating those first would be a rewrite stage of its own, out of scope for acceptance.
 
 ### Totals
 
@@ -320,4 +321,41 @@ reporting artifact, not extra assertions: each Spock data-driven `where:` featur
 zero-assertion container node in the surefire XML (here the XML/YAML/JSON format feature and the
 command × object-kind warning feature). Stage 10's before/after comparison should read the
 logical count, not the raw surefire number.
+
+## Stage 10 acceptance — coverage before/after
+
+Full `mvn test` against the stand after the migration: **210 run / 0 failed / 0 errors /
+60 skipped** (the skipped are the harness `INVALID TEST` cases — 45 change + 1 data +
+4 snapshot + 10 generateChangelog). `mvn -Punit test` without the stand: **47/0/0**
+(19 `TrinoDatabaseUnitTest` + 16 `TrinoSqlGeneratorsUnitTest` + 12 `TrinoDdlFetcherUnitTest`).
+The pre-migration baseline was **124 tests, 78 of them tagged `integration`**.
+
+JaCoCo from `target/site/jacoco/jacoco.csv` (run of 2026-10-15, all suites in one session),
+each class against its baseline row above:
+
+| Main class | Instr % baseline → now | Branch % baseline → now | Verdict |
+| --- | --- | --- | --- |
+| `database.TrinoDatabase` | 78.6% → 81.6% | 54.5% → 64.6% | improved |
+| `diff.TrinoDdlChangeGenerator` | 89.7% → 89.7% | 80.0% → 80.0% | equal |
+| `snapshot.TrinoDdlFetcher` | 97.0% → 97.0% | 85.3% → 85.3% | equal |
+| `snapshot.TrinoSchemaSnapshotGenerator` | 89.0% → 89.0% | 75.0% → 75.0% | equal |
+| `snapshot.TrinoTableSnapshotGenerator` | 100.0% → 100.0% | 100.0% → 100.0% | equal |
+| `snapshot.TrinoViewSnapshotGenerator` | 96.4% → 96.4% | 87.5% → 87.5% | equal |
+| `sqlgenerator.TrinoAddColumnGenerator` | 79.3% → 79.3% | 50.0% → 50.0% | equal |
+| `sqlgenerator.TrinoCreateDatabaseChangeLogLockTableGenerator` | 100.0% → 100.0% | n/a | equal |
+| `sqlgenerator.TrinoRenameColumnGenerator` | 100.0% → 100.0% | n/a | equal |
+| `sqlgenerator.TrinoSelectFromDatabaseChangeLogGenerator` | 93.0% → 93.0% | 75.0% → 75.0% | equal |
+| `database.TrinoJdbcConnection` | no baseline → 100.0% | n/a | new row, see below |
+| **bundle (same 10 classes)** | **89.6% → 90.4%** | **73.6% → 76.3%** | improved |
+
+The acceptance rule holds: no class dropped below its baseline instruction or branch
+coverage; the only mover is `TrinoDatabase` (69 instr / 17 branch missed against the
+baseline 77 / 20).
+
+**The 11th class.** The baseline table lists 10 classes, but `src/main` has 11:
+`database.TrinoJdbcConnection` already existed in the baseline commit and was never given
+a baseline row. It is recorded here as a new row at 100% instruction coverage — no branch
+code to cover, so no branch column. The bundle totals above therefore compare the same 10
+classes on both sides (current bundle over all 11 classes is 90.5% instruction; the branch
+figure is identical).
 

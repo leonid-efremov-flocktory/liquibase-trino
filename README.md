@@ -25,12 +25,12 @@ PostgreSQL is the nearest dialect, but it cannot be used: Liquibase runs
 | Command | Supported | Notes |
 | --- | --- | --- |
 | `update` / `migrate` | yes | Applies XML, YAML and JSON changelogs, `<sql>`, `<sqlFile>`, and the DDL and data change types pinned by the golden tests. |
-| `rollback` / `rollback-sql` | yes | Rollback blocks in changelogs work; `TrinoRollbackIntegrationTest` parses the fixture and executes the generated SQL on the stand. |
+| `rollback` / `rollback-sql` | yes | Rollback blocks in changelogs work; `TrinoRollbackSpec` parses the fixture and executes the generated SQL on the stand. |
 | `generate-changelog` | yes | Emits verbatim DDL as raw SQL, not as `<createTable>` — see [below](#snapshot-and-generate-changelog) for the schema argument and the required `.trino.sql` output name. |
 | `status`, `history`, `tag`, `tagExists` | yes | Go through `TrinoSelectFromDatabaseChangeLogGenerator`. |
 | `update-sql` | yes | Used by the golden tests. |
 | `snapshot` | yes | Emits the verbatim DDL as the `trino.ddl` attribute on tables and views. Needs the schema named — see below. |
-| `diff`, `diffChangelog` | partially | A difference confined to `trino.ddl` is detected and reported, but no change is generated for it. Covered by `TrinoDiffIntegrationTest` and `TrinoDiffChangelogIntegrationTest`; see [Known limitations](#known-limitations). |
+| `diff`, `diffChangelog` | partially | A difference confined to `trino.ddl` is detected and reported, but no change is generated for it. Covered by `TrinoDiffSpec` and `TrinoDiffChangelogSpec`; see [Known limitations](#known-limitations). |
 | `dropAll` | no | Reads foreign keys through the JDBC metadata API, which Trino does not have. |
 
 ## Dependencies
@@ -42,7 +42,10 @@ All dependencies live in `pom.xml` — the single source of truth:
 | `io.trino:trino-jdbc:464` | compile | Trino JDBC driver; reports product name `Trino` |
 | `com.h2database:h2:2.4.240` | compile | H2 driver for `H2Database`, which `TrinoDatabase` extends |
 | `org.liquibase:liquibase-core:5.0.4` | provided | Supplied by Liquibase itself, not bundled |
-| `org.junit.jupiter:junit-jupiter:5.10.2` | test | Tests |
+| `org.junit.jupiter:junit-jupiter:6.1.0` | test | Unit tests |
+| `org.junit.platform:junit-platform-suite:6.1.0` | test | `@SelectClasses` suites that bind each harness level to one class |
+| `org.spockframework:spock-core:2.4-groovy-5.0` | test | The integration specs the harness cannot express |
+| `org.apache.groovy:groovy:5.0.6` | test | Groovy runtime+compiler for the specs above (`groovy-json` alongside) |
 
 > **Note on h2.** The Liquibase 5.0.4 distribution already ships `internal/lib/h2.jar` at
 > the same version (2.4.240). When building an image, h2 must be excluded from the
@@ -92,13 +95,13 @@ Releases are driven by tags. Pushing `v*` runs
 
 ```bash
 # git tag -f
-git tag v0.2.0 && git push origin main && git push origin v0.2.0
+git tag v0.2.2 && git push origin main && git push origin v0.2.2
 ```
 
 ## Tests
 
-Tests live in `src/test/java` (JUnit 5). Integration tests need the stand from
-`src/test/resources/docker/docker-compose-464.yml` (catalog `iceberg_catalog`, port 8081):
+Integration tests need the stand from `src/test/resources/docker/docker-compose-464.yml`
+(catalog `iceberg_catalog`, port 8081):
 
 ```bash
 ./run-tests.sh          # start the stand, run the suite, stop it
@@ -111,46 +114,75 @@ Tests live in `src/test/java` (JUnit 5). Integration tests need the stand from
 Extra arguments after the command are passed through to Maven, e.g.
 `./run-tests.sh test -Dtest=TrinoRollbackSpec`. If Maven is installed on the host
 the script uses it, otherwise it runs the build in a `maven:3.9-eclipse-temurin-17` container
-(Trino is reachable there via `host.docker.internal`). The Trino URL and user can be
-overridden with `TRINO_TEST_URL` / `TRINO_TEST_USER`.
+(Trino is reachable there via `host.docker.internal`). The URL and user can be overridden
+with `TRINO_TEST_URL` / `TRINO_TEST_USER`; a `TRINO_TEST_URL` override replaces one of the
+defaults above and must name the catalog on a stand that is already running.
 
-**124 tests in total: 78 need the stand, 46 run without it.** The 46 take well under a second:
+**210 tests in total: 150 execute and 60 are skipped** (the harness cases pinned as
+`INVALID TEST` for change types Trino does not support). Of the 150, 47 need no stand —
+take well under a second and cover the dialect and SQL generators from H2 only:
 
 ```bash
-mvn test -Punit
+./run-tests.sh test -Punit      # or: mvn test -Punit
 ```
 
+(The reported 210 counts two extra Spock containers for data-driven `where:` blocks;
+logically the suite is 208.)
+
 The split is by tag, not by file name: every test needing the stand carries
-`@Tag("integration")`, and `-Punit` excludes that tag. Name-based matching
-(`**/*IntegrationTest.java`) missed two classes whose names do not advertise the dependency —
-`TrinoGoldenSqlTest` and `TrinoTableSnapshotGeneratorUnitTest` — so `-Punit` quietly needed
-docker. `@EnabledIf` still guards the default build, where no stand is running: such tests skip
-rather than fail.
+`@Tag("integration")` (the Spock specs inherit it from `TrinoIntegrationSpec`), and `-Punit`
+excludes that tag. Name-based matching (`**/*IntegrationTest.java`) missed a class whose
+name does not advertise the dependency — `TrinoTableSnapshotGeneratorUnitTest` — so
+`-Punit` quietly needed docker. The two suite classes (`*HarnessSuiteIT`) carry no tag and
+are skipped by file name for the opposite reason: a JUnit Platform suite is a shell that
+would otherwise drag the official harness into a "unit" run. `@EnabledIf` and the Spock
+`@IgnoreIf` still guard the default build, where no stand is running: such tests skip rather
+than fail.
 
-All test classes share a single fixture, `src/test/resources/liquibase/ext/trino/test-changelog.xml`.
+All command-level tests share a single fixture,
+`src/test/resources/liquibase/ext/trino/test-changelog.xml`.
 
-Tests are grouped by the part of the plugin they cover, in packages mirroring the main sources
-(`database`, `sqlgenerator`, `snapshot`) plus `changelog` for the Liquibase commands:
+Tests live in two languages: unit tests in `src/test/java` (JUnit 5), and the integration
+specs the harness cannot express in `src/test/groovy` (Spock, under the shared base
+`TrinoIntegrationSpec`):
 
 ```
 src/test/java/liquibase/ext/trino/
 ├── TrinoTestSupport.java          # shared fixture plumbing: connection, reset, state readers
 ├── database/                      # the dialect: properties, and picking it from a connection
 ├── sqlgenerator/                  # the SQL the generators emit
+└── snapshot/                      # snapshot discovery; the snapshot/generate-changelog commands
+
+src/test/groovy/liquibase/ext/trino/
+├── TrinoIntegrationSpec.groovy    # the Spock base: @Tag("integration") + stand gate
+├── *HarnessSuiteIT.groovy         # the two Liquibase Test Harness suites under test
 ├── changelog/                     # update, rollback, status/history/tag, changelog formats
-├── snapshot/                      # finding existing objects, the commands end to end, diff, and
-└── golden/                        # the SQL every supported change type produces, pinned
+├── snapshot/                      # snapshot failure, diff and diffChangelog
+└── harness/                       # the dbUrl seam between run-tests.sh and harness-config.yml
 ```
 
-### Golden layer
+### The Liquibase Test Harness layer
 
-`TrinoGoldenSqlTest` pins the SQL that every supported change type produces. Each case is a
-changelog under `golden/changelogs/` and the expected SQL under `golden/expected-sql/` — 17
-changelogs, 18 cases (`comments.xml` is exercised twice). Every case runs twice: the
-`update-sql` output is compared with the golden file verbatim, and then the changelog is
-really applied, checked through `information_schema`, rolled back, and its schema dropped.
-The halves cover each other — a verbatim comparison alone would pass SQL Trino rejects, and
-an apply alone would let the SQL change silently.
+The dialect is verified by the official
+[Liquibase Test Harness](https://github.com/liquibase/liquibase-test-harness), at two
+verification levels — Contributed (`ChangeObjectTests`, `ChangeDataTests`) and Advanced
+(`SnapshotObjectTests`, `GenerateChangelogTest`). The resources follow the harness
+convention: under `src/test/resources/liquibase/harness/`, one directory per suite with a
+`trino/` subdirectory for per-database expectations — changelogs to apply, expected SQL
+files, expected snapshots and result sets.
+
+The 18 golden cases (one per supported change type, the SQL pinned verbatim) live in the
+harness's `change/` suite now. `expectedSql/trino/*.sql` replaces the old golden layer;
+cases for change types Trino rejects are pinned as `INVALID TEST -- …` in the expected
+file, which the harness treats as "known unsupported, skip". GitHub runs each level as its
+own matrix job on every pull request
+([`.github/workflows/test-harness.yml`](.github/workflows/test-harness.yml)), while
+pushing a tag runs the full suite (see [Release](#release)).
+
+The commands the harness cannot express — its diff specs need `dropAll` (Trino refuses
+`CASCADE`), and its `rollback`/`read-commands`/changelog-format/`DATABASECHANGELOGLOCK`
+probes are Liquibase-version specific — stay as tailor-made Spock specs under `changelog/`
+and `snapshot/`.
 
 ### Test stand
 
