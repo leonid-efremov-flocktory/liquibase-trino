@@ -24,7 +24,12 @@ contains a single session and the reports below reflect exactly one full run.
 `./run-tests.sh test` fell back to the containerized Maven (no `mvn` on the host);
 the log is a plain `mvn test` either way.
 
-## Baseline numbers
+## Baseline numbers (historical snapshot, 2026-10-08)
+
+These are the **pre-rewrite** figures captured at commit `bf42c90`, before any migration
+step. They are the comparison target for stage 5 and are **superseded** by the harness
+migration totals further down (210 run / 60 skipped). Do not read the two as one current
+state.
 
 - **Tests: 124 run, 0 failures, 0 errors, 0 skipped** — `BUILD SUCCESS`,
   total Maven time 02:30 min, in-test time 145.13 s.

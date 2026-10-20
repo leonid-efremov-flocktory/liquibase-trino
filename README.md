@@ -14,24 +14,29 @@ no built-in Trino support, so we need a class that:
    `DATABASECHANGELOGLOCK` tracking tables and the queries against them are valid.
 
 PostgreSQL is the nearest dialect, but it cannot be used: Liquibase runs
-`SHOW SEARCH_PATH` / `SET SEARCH_PATH` on connect, and Trino has no such thing.
+`SHOW SEARCH_PATH` / `SET SEARCH_PATH` before every command, and Trino has no such thing.
 **H2** lacks that init SQL and provides type mappings that are all valid in Trino:
 `datetime`→`TIMESTAMP`, `boolean`→`BOOLEAN`, `int`→`INT`, `varchar`→`VARCHAR`.
 
 `H2Database` ships inside `liquibase-core`; all this plugin adds on top is the H2 JDBC driver.
 
+The reasoning behind this choice — and the two alternatives that were rejected — is
+recorded in [`docs/adrs/main_concept.md`](docs/adrs/main_concept.md). A longer
+walk-through of the implementation lives in [`description.md`](description.md); this
+README stays the short, task-oriented copy.
+
 ## Supported commands
 
-| Command | Supported | Notes |
-| --- | --- | --- |
-| `update` / `migrate` | yes | Applies XML, YAML and JSON changelogs, `<sql>`, `<sqlFile>`, and the DDL and data change types pinned by the golden tests. |
-| `rollback` / `rollback-sql` | yes | Rollback blocks in changelogs work; `TrinoRollbackSpec` parses the fixture and executes the generated SQL on the stand. |
-| `generate-changelog` | yes | Emits verbatim DDL as raw SQL, not as `<createTable>` — see [below](#snapshot-and-generate-changelog) for the schema argument and the required `.trino.sql` output name. |
-| `status`, `history`, `tag`, `tagExists` | yes | Go through `TrinoSelectFromDatabaseChangeLogGenerator`. |
-| `update-sql` | yes | Used by the golden tests. |
-| `snapshot` | yes | Emits the verbatim DDL as the `trino.ddl` attribute on tables and views. Needs the schema named — see below. |
-| `diff`, `diffChangelog` | partially | A difference confined to `trino.ddl` is detected and reported, but no change is generated for it. Covered by `TrinoDiffSpec` and `TrinoDiffChangelogSpec`; see [Known limitations](#known-limitations). |
-| `dropAll` | no | Reads foreign keys through the JDBC metadata API, which Trino does not have. |
+| Command | Supported | Verified by | Notes |
+| --- | --- | --- | --- |
+| `update` | yes | `TrinoChangeLogUpdateSpec`, harness `change/` | Applies XML, YAML and JSON changelogs, `<sql>`, `<sqlFile>`, and the DDL and data change types pinned by the golden tests. |
+| `rollback` / `rollback-sql` | yes | `TrinoRollbackSpec` | Rollback blocks in changelogs work; the spec parses the fixture and executes the generated SQL on the stand. |
+| `generate-changelog` | yes | `TrinoGenerateChangelogIntegrationTest`, harness `generateChangelog/` | Emits verbatim DDL as raw SQL, not as `<createTable>` — see [`description.md`](description.md#snapshot-and-generate-changelog) for the schema argument and the required `.trino.sql` output name. |
+| `status`, `history`, `tag`, `tagExists` | yes | `TrinoReadCommandsSpec` | Go through `TrinoSelectFromDatabaseChangeLogGenerator`. |
+| `update-sql` | yes | harness `change/` | Used by the golden tests. |
+| `snapshot` | yes | `TrinoSnapshotCommandIntegrationTest`, harness `snapshot/` | Emits the verbatim DDL as the `trino.ddl` attribute on tables and views. Needs the schema named — see [`description.md`](description.md#snapshot-and-generate-changelog). |
+| `diff`, `diffChangelog` | partially | `TrinoDiffSpec`, `TrinoDiffChangelogSpec` | A difference confined to `trino.ddl` is detected and reported, but no change is generated for it; see [Known limitations](#known-limitations). |
+| `dropAll` | no | — | Reads foreign keys through the JDBC metadata API, which Trino does not have. |
 
 ## Dependencies
 
@@ -42,13 +47,15 @@ All dependencies live in `pom.xml` — the single source of truth:
 | `io.trino:trino-jdbc:464` | compile | Trino JDBC driver; reports product name `Trino` |
 | `com.h2database:h2:2.4.240` | compile | H2 driver for `H2Database`, which `TrinoDatabase` extends |
 | `org.liquibase:liquibase-core:5.0.4` | provided | Supplied by Liquibase itself, not bundled |
+| `org.liquibase:liquibase-test-harness:1.0.12` | test | The official harness suites (`ContributedHarnessSuiteIT`, `AdvancedHarnessSuiteIT`) |
 | `org.junit.jupiter:junit-jupiter:6.1.0` | test | Unit tests |
 | `org.junit.platform:junit-platform-suite:6.1.0` | test | `@SelectClasses` suites that bind each harness level to one class |
 | `org.spockframework:spock-core:2.4-groovy-5.0` | test | The integration specs the harness cannot express |
 | `org.apache.groovy:groovy:5.0.6` | test | Groovy runtime+compiler for the specs above (`groovy-json` alongside) |
 
-> **Note on h2.** The Liquibase 5.0.4 distribution already ships `internal/lib/h2.jar` at
-> the same version (2.4.240). When building an image, h2 must be excluded from the
+> **Note on h2.** The Liquibase 5.0.4 *binary* distribution already ships
+> `internal/lib/h2.jar` at the same version (2.4.240) — the Maven `liquibase-core`
+> artifact does not. When building an image, h2 must be excluded from the
 > copied dependencies — otherwise two H2 drivers end up on the classpath and Liquibase
 > prints `*** Duplicate JAR files ***` on every start.
 
@@ -60,7 +67,7 @@ Add to the consumer's `pom.xml`:
 <dependency>
     <groupId>io.github.leonid-efremov-flocktory</groupId>
     <artifactId>liquibase-trino</artifactId>
-    <version>0.1.2</version>
+    <version>0.2.2</version>
 </dependency>
 ```
 
@@ -70,7 +77,7 @@ Or with a single Maven invocation:
 mvn dependency:copy-dependencies \
     -DincludeScope=runtime \
     -DexcludeArtifactIds=h2 \
-    -Dartifact=io.github.leonid-efremov-flocktory:liquibase-trino:0.1.2
+    -Dartifact=io.github.leonid-efremov-flocktory:liquibase-trino:0.2.2
 ```
 
 Liquibase loads every jar from `internal/lib` and `internal/extensions`, so no separate
@@ -140,49 +147,25 @@ would otherwise drag the official harness into a "unit" run. `@EnabledIf` and th
 than fail.
 
 All command-level tests share a single fixture,
-`src/test/resources/liquibase/ext/trino/test-changelog.xml`.
-
-Tests live in two languages: unit tests in `src/test/java` (JUnit 5), and the integration
-specs the harness cannot express in `src/test/groovy` (Spock, under the shared base
-`TrinoIntegrationSpec`):
-
-```
-src/test/java/liquibase/ext/trino/
-├── TrinoTestSupport.java          # shared fixture plumbing: connection, reset, state readers
-├── database/                      # the dialect: properties, and picking it from a connection
-├── sqlgenerator/                  # the SQL the generators emit
-└── snapshot/                      # snapshot discovery; the snapshot/generate-changelog commands
-
-src/test/groovy/liquibase/ext/trino/
-├── TrinoIntegrationSpec.groovy    # the Spock base: @Tag("integration") + stand gate
-├── *HarnessSuiteIT.groovy         # the two Liquibase Test Harness suites under test
-├── changelog/                     # update, rollback, status/history/tag, changelog formats
-├── snapshot/                      # snapshot failure, diff and diffChangelog
-└── harness/                       # the dbUrl seam between run-tests.sh and harness-config.yml
-```
-
-### The Liquibase Test Harness layer
+`src/test/resources/liquibase/ext/trino/test-changelog.xml`. Tests live in two languages:
+unit tests in `src/test/java` (JUnit 5), and the integration specs the harness cannot
+express in `src/test/groovy` (Spock, under the shared base `TrinoIntegrationSpec`).
 
 The dialect is verified by the official
-[Liquibase Test Harness](https://github.com/liquibase/liquibase-test-harness), at two
+[Liquibase Test Harness](https://github.com/liquibase/liquibase-test-harness) at two
 verification levels — Contributed (`ChangeObjectTests`, `ChangeDataTests`) and Advanced
-(`SnapshotObjectTests`, `GenerateChangelogTest`). The resources follow the harness
-convention: under `src/test/resources/liquibase/harness/`, one directory per suite with a
-`trino/` subdirectory for per-database expectations — changelogs to apply, expected SQL
-files, expected snapshots and result sets.
-
-The 18 golden cases (one per supported change type, the SQL pinned verbatim) live in the
-harness's `change/` suite now. `expectedSql/trino/*.sql` replaces the old golden layer;
-cases for change types Trino rejects are pinned as `INVALID TEST -- …` in the expected
-file, which the harness treats as "known unsupported, skip". GitHub runs each level as its
-own matrix job on every pull request
+(`SnapshotObjectTests`, `GenerateChangelogTest`). The 18 golden cases (one per supported
+change type, the SQL pinned verbatim) live in the harness's `change/` suite; cases for
+change types Trino rejects are pinned as `INVALID TEST -- …` in the expected file, which
+the harness treats as "known unsupported, skip". GitHub runs each level as its own matrix
+job on every pull request
 ([`.github/workflows/test-harness.yml`](.github/workflows/test-harness.yml)), while
-pushing a tag runs the full suite (see [Release](#release)).
-
-The commands the harness cannot express — its diff specs need `dropAll` (Trino refuses
-`CASCADE`), and its `rollback`/`read-commands`/changelog-format/`DATABASECHANGELOGLOCK`
-probes are Liquibase-version specific — stay as tailor-made Spock specs under `changelog/`
-and `snapshot/`.
+pushing a tag runs the full suite (see [Release](#release)). The commands the harness cannot
+express — its diff specs need `dropAll` (Trino refuses `CASCADE`), and its
+`rollback`/`read-commands`/changelog-format/`DATABASECHANGELOGLOCK` probes are
+Liquibase-version specific — stay as tailor-made Spock specs under `changelog/` and
+`snapshot/`. The per-class breakdown and the harness resource layout are in
+[`TEST-COVERAGE.md`](TEST-COVERAGE.md).
 
 ### Test stand
 
@@ -198,7 +181,15 @@ Services in `src/test/resources/docker/docker-compose-464.yml`:
 ## Known limitations
 
 - **The schema has to be named** for `snapshot` and `generate-changelog`, and getting it
-  wrong is silent — see [above](#snapshot-and-generate-changelog).
+  wrong is silent — see [`description.md`](description.md#snapshot-and-generate-changelog).
+- **H2 inherits a few type mappings Trino does not accept.** `TrinoDatabase` extends
+  `H2Database`, so core's `instanceof H2Database` branches run against Trino and emit H2's
+  spellings: `blob` → `BLOB`/`BINARY LARGE OBJECT`, `clob` → `CLOB`/`LONGVARCHAR`,
+  `xml` → `CLOB`, and a large-object `char` → `CHARACTER LARGE OBJECT`. None of those are
+  Trino types. The types Liquibase uses for the tracking tables and the common change types
+  are fine; a changelog that declares one of these is not. See
+  [`description.md`](description.md#not-supported) and
+  [`docs/adrs/main_concept.md`](docs/adrs/main_concept.md).
 - **Verbatim DDL cannot express a difference that Trino does not report.** The snapshot is
   whatever `SHOW CREATE` said, so anything Trino does not print is not in the changelog. In
   practice this means the unsupported constraint types below: an Iceberg table's constraints
