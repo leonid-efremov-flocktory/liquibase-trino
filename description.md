@@ -7,10 +7,12 @@ class that claims a Trino connection and is close enough to Trino's dialect for 
 tables and the queries against them to be valid.
 
 PostgreSQL is the nearest dialect by meaning and cannot be used: Liquibase runs
-`SHOW SEARCH_PATH` / `SET SEARCH_PATH` on connect and Trino has neither. `H2Database` has no
-init SQL and its type mappings are all valid in Trino (`datetime`→`TIMESTAMP`,
+`SHOW SEARCH_PATH` / `SET SEARCH_PATH` before every command and Trino has neither. `H2Database`
+has no init SQL and its type mappings are all valid in Trino (`datetime`→`TIMESTAMP`,
 `boolean`→`BOOLEAN`, `int`→`INT`, `varchar`→`VARCHAR`), and it already ships inside
-`liquibase-core`, so the plugin only adds the H2 JDBC driver on top.
+`liquibase-core`, so the plugin only adds the H2 JDBC driver on top. The trade-offs of this
+choice — and the two alternatives that were rejected — are recorded in
+[`docs/adrs/main_concept.md`](docs/adrs/main_concept.md).
 
 ## `TrinoDatabase` overrides that change behaviour
 
@@ -37,7 +39,7 @@ Every class is registered through a `META-INF/services` file, so dropping the ja
 | `sqlgenerator/TrinoCreateDatabaseChangeLogLockTableGenerator.java` | Trino rejects `CONSTRAINT ... PRIMARY KEY` in `CREATE TABLE`, so the lock table is created without one and `LOCKGRANTED` is a `TIMESTAMP` rather than H2's `datetime`. Without it the very first `update` fails. |
 | `sqlgenerator/TrinoAddColumnGenerator.java` | Emits `ALTER TABLE ... ADD COLUMN <name> <type>`. The base generator emits a bare `ADD`, which Trino rejects with `mismatched input '<name>'. Expecting: '.', 'ADD'`. Only the keyword is added; the type, default, nullability and auto-increment clauses are still the base generator's. If the base clause ever stops starting with `" ADD "`, the override throws rather than silently emitting SQL Trino rejects. |
 | `sqlgenerator/TrinoRenameColumnGenerator.java` | Emits `ALTER TABLE ... RENAME COLUMN old TO new`. This override exists only because `TrinoDatabase` extends `H2Database`: the base generator branches on the database type and picks the H2 form `ALTER COLUMN old RENAME TO new`, which Trino rejects with `mismatched input 'RENAME'. Expecting: '.', 'DROP', 'SET'`. |
-| `snapshot/TrinoSchemaSnapshotGenerator.java` | Schema snapshot via JDBC `getSchemas()` with case-insensitive `equalsIgnoreCase` matching on `catalog + schema` — the two names compared explicitly, so two matches are impossible and there is no ambiguity branch. The base `SchemaSnapshotGenerator` fails on Trino with `Found multiple catalog/schemas matching iceberg_catalog.dev_migrations`; that ambiguity was born from the base generator losing the catalog, and the explicit comparison removes both its cause and the `InvalidExampleException`/`DatabaseObjectComparatorFactory` indirection built around it. The `replaces()` method is mandatory: `SnapshotGeneratorChain` calls **every** generator by priority. It must stay at `PRIORITY_DEFAULT` — the slot `SchemaSnapshotGenerator` itself occupies — and **not** be raised; see the `addTo` recursion note below. |
+| `snapshot/TrinoSchemaSnapshotGenerator.java` | Schema snapshot via JDBC `getSchemas()` with case-insensitive `equalsIgnoreCase` matching on `catalog + schema` — the two names compared explicitly, so two matches are impossible and there is no ambiguity branch. The base `SchemaSnapshotGenerator` fails on Trino with `Found multiple catalog/schemas matching iceberg_catalog.dev_migrations`; that ambiguity was born from the base generator losing the catalog, and the explicit comparison removes both its cause and the `InvalidExampleException`/`DatabaseObjectComparatorFactory` indirection built around it. The `replaces()` method is mandatory: `SnapshotGeneratorChain` calls **every** generator by priority. It must stay at `PRIORITY_DEFAULT` — the slot `SchemaSnapshotGenerator` itself occupies; see the priority note below. |
 | `snapshot/TrinoTableSnapshotGenerator.java`, `snapshot/TrinoViewSnapshotGenerator.java` | Put the server's own DDL on the object as the `trino.ddl` attribute, so that `snapshot` shows what `SHOW CREATE` said rather than a reconstruction. `PRIORITY_DEFAULT` for their own type, inherited priority for every other type — same reason as the schema generator. |
 | `snapshot/TrinoDdlFetcher.java` | The `SHOW CREATE TABLE` / `SHOW CREATE VIEW` calls, the trailing-semicolon strip, and the check that the object is a `TrinoDatabase`. Returns null rather than throwing when the relation cannot be read: a missing relation costs the DDL attribute, not the whole snapshot. |
 | `diff/TrinoDdlChangeGenerator.java` | Turns the `trino.ddl` attribute into a `RawSQLChange`, which is what makes `generate-changelog` emit the server's text instead of a lossy `<createTable>`. Registered at `TRINO_PRIORITY_DATABASE`. |
@@ -58,13 +60,10 @@ its tables or views.**
 
 The two object snapshot generators subclass `TableSnapshotGenerator` / `ViewSnapshotGenerator`
 and override only `snapshotObject`, calling `super` first, so relations are still found through
-JDBC metadata and columns are still read one by one. They return `PRIORITY_DEFAULT` for their
-own type — the slot the base generator occupies — and delegate to `super.getPriority` for every
-other type, because `addTo` works by recursion: a `PRIORITY_ADDITIONAL` generator (Table, View,
-Column at 50) calls `chain.snapshot(...)` and attaches to the result, so the generator that
-produces the `Schema` has to come **last** in the chain. Returning a higher priority for an
-unrelated type would demote the generator below those and starve their `addTo` pass. This is
-why every snapshot used to find the schema but none of its tables.
+JDBC metadata and columns are still read one by one. For the same reason they return
+`PRIORITY_DEFAULT` for their own type and delegate to `super.getPriority` for every other type:
+a higher priority for an unrelated type would demote them below the `addTo` generators and
+starve their pass.
 
 ### `RawSQLChange` and the writer's two hard rules
 
@@ -246,12 +245,36 @@ Two routes that look equivalent and are not:
 | `<addPrimaryKey>`, `<addForeignKeyConstraint>`, `<addUniqueConstraint>` | the same, for `PrimaryKey`, `ForeignKey`, `UniqueConstraint`; Trino enforces nothing at DDL time |
 | `<modifyDataType>` | not supported by Trino itself |
 | `<addNotNullConstraint>` | not supported by Trino itself |
+| `blob`, `clob`, `xml` and large-object `char` column types | inherited from `H2Database`: core's `instanceof H2Database` branches emit H2 spellings (`BLOB`/`BINARY LARGE OBJECT`, `CLOB`/`LONGVARCHAR`, `CLOB`, `CHARACTER LARGE OBJECT`) that Trino does not accept. The types the tracking tables and the common change types use are fine. |
 | Sequences | `supportsSequences()` → `false`; Trino has no sequences |
 | `dropAll` | reads foreign keys through the JDBC metadata API; Trino has no `information_schema.table_constraints`. The tests reset the stand with `DROP SCHEMA ... CASCADE` |
-| `diff` | the comparison is structural and does not consider the `trino.ddl` attribute; the command itself is not covered by a test |
+| `diff` | the comparison is structural and does not consider the `trino.ddl` attribute; `TrinoDiffSpec` pins today's behaviour |
 
 Because the constraint types are unsupported, `SHOW CREATE TABLE` output for an Iceberg table is
 the only record of them; a generated changelog will not recreate them as constraints.
+
+## Testing
+
+The dialect is verified by the official
+[Liquibase Test Harness](https://github.com/liquibase/liquibase-test-harness) at two
+verification levels — Contributed (`ChangeObjectTests`, `ChangeDataTests`) and Advanced
+(`SnapshotObjectTests`, `GenerateChangelogTest`) — plus tailor-made Spock specs for the
+commands the harness cannot express. The 18 golden cases (one per supported change type, the
+SQL pinned verbatim) live in the harness's `change/` suite; cases for change types Trino
+rejects are pinned as `INVALID TEST -- …` in the expected file, which the harness treats as
+"known unsupported, skip". The harness specs it cannot run — its diff specs need `dropAll`,
+which Trino refuses — stay as specs under `changelog/` and `snapshot/`.
+
+Tests live in two languages: unit tests in `src/test/java` (JUnit 5), and the integration
+specs in `src/test/groovy` (Spock, under the shared base `TrinoIntegrationSpec`). The split
+between "needs the stand" and "stand-free" is by `@Tag("integration")`, not by file name:
+`-Punit` excludes that tag, and the two harness suite classes (`*HarnessSuiteIT`) are excluded
+by name because a JUnit Platform suite is a shell that would otherwise drag the official
+harness into a unit run. `@EnabledIf` and the Spock `@IgnoreIf` guard the default build, where
+no stand is running, so such tests skip rather than fail.
+
+The full capability → test map, the per-class counts and the harness resource layout are in
+[`TEST-COVERAGE.md`](TEST-COVERAGE.md).
 
 ## Test stand
 
